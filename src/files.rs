@@ -684,4 +684,350 @@ mod tests {
         // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[tokio::test]
+    async fn test_read_file() {
+        let temp_dir = std::env::temp_dir().join("test_read_file");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let config = test_config(temp_dir.to_str().unwrap());
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        // Store a file
+        let data = b"Hello, World!".to_vec();
+        let cached = cache
+            .store_file(data.clone(), "test.txt", "text/plain")
+            .await
+            .unwrap();
+
+        // Read the file back
+        let content = cache.read_file(&cached.file_id).await.unwrap();
+        assert_eq!(content, data);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_read_file_not_found() {
+        let temp_dir = std::env::temp_dir().join("test_read_file_not_found");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let config = test_config(temp_dir.to_str().unwrap());
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        // Try to read a non-existent file
+        let result = cache.read_file("nonexistent").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::error::AppError::NotFound(_)));
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_read_expired_file() {
+        let temp_dir = std::env::temp_dir().join("test_read_expired_file");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        // Create config with 24 hour TTL
+        let config = test_config(temp_dir.to_str().unwrap());
+
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        // Store a file
+        let data = b"This will expire".to_vec();
+        let cached = cache
+            .store_file(data, "expire.txt", "text/plain")
+            .await
+            .unwrap();
+
+        // Manually make the file appear expired by setting created_at to epoch
+        {
+            let mut files = cache.files.write().await;
+            if let Some(f) = files.get_mut(&cached.file_id) {
+                f.created_at = 0; // Epoch time = definitely expired
+            }
+        }
+
+        // Try to read - should fail due to expiration
+        let result = cache.read_file(&cached.file_id).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::error::AppError::Gone(_)));
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired_files() {
+        let temp_dir = std::env::temp_dir().join("test_cleanup_expired");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        // Create config with 1 hour TTL
+        let config = test_config(temp_dir.to_str().unwrap());
+
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        // Store some files
+        let cached1 = cache
+            .store_file(b"file1".to_vec(), "f1.txt", "text/plain")
+            .await
+            .unwrap();
+        let cached2 = cache
+            .store_file(b"file2".to_vec(), "f2.txt", "text/plain")
+            .await
+            .unwrap();
+
+        let stats_before = cache.stats().await;
+        assert_eq!(stats_before.file_count, 2);
+
+        // Manually make the files appear expired by modifying their created_at
+        // in the in-memory index to be more than 24 hours ago
+        {
+            let mut files = cache.files.write().await;
+            if let Some(f) = files.get_mut(&cached1.file_id) {
+                f.created_at = 0; // Epoch time = definitely expired
+            }
+            if let Some(f) = files.get_mut(&cached2.file_id) {
+                f.created_at = 0;
+            }
+        }
+
+        // Run cleanup
+        let removed = cache.cleanup().await.unwrap();
+        assert_eq!(removed, 2);
+
+        let stats_after = cache.stats().await;
+        assert_eq!(stats_after.file_count, 0);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_no_expired_files() {
+        let temp_dir = std::env::temp_dir().join("test_cleanup_no_expired");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        // Create config with long TTL
+        let config = test_config(temp_dir.to_str().unwrap());
+
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        // Store some files
+        cache
+            .store_file(b"file1".to_vec(), "f1.txt", "text/plain")
+            .await
+            .unwrap();
+
+        // Run cleanup - should not remove any files
+        let removed = cache.cleanup().await.unwrap();
+        assert_eq!(removed, 0);
+
+        let stats = cache.stats().await;
+        assert_eq!(stats.file_count, 1);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_get_file_path() {
+        let temp_dir = std::env::temp_dir().join("test_get_file_path");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let config = test_config(temp_dir.to_str().unwrap());
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        // Store a file
+        let cached = cache
+            .store_file(b"test".to_vec(), "test.txt", "text/plain")
+            .await
+            .unwrap();
+
+        // Get file path
+        let path = cache.get_file_path(&cached.file_id).await;
+        assert!(path.is_some());
+        let path = path.unwrap();
+        assert!(path.exists());
+        assert!(path.to_str().unwrap().contains(&cached.file_id));
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_scan_directory_on_startup() {
+        let temp_dir = std::env::temp_dir().join("test_scan_directory");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        // First, create a cache and store a file
+        {
+            let config = test_config(temp_dir.to_str().unwrap());
+            let cache = FileCache::new(config, "http://localhost:8080")
+                .await
+                .unwrap();
+
+            cache
+                .store_file(b"persistent".to_vec(), "persist.txt", "text/plain")
+                .await
+                .unwrap();
+
+            let stats = cache.stats().await;
+            assert_eq!(stats.file_count, 1);
+        }
+        // Cache dropped here, but files remain on disk
+
+        // Create a new cache instance - should scan and find the file
+        {
+            let config = test_config(temp_dir.to_str().unwrap());
+            let cache = FileCache::new(config, "http://localhost:8080")
+                .await
+                .unwrap();
+
+            let stats = cache.stats().await;
+            assert_eq!(stats.file_count, 1);
+        }
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent_file() {
+        let temp_dir = std::env::temp_dir().join("test_delete_nonexistent");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let config = test_config(temp_dir.to_str().unwrap());
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        // Deleting a non-existent file should succeed (no-op)
+        let result = cache.delete("nonexistent").await;
+        assert!(result.is_ok());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_store_file_without_extension() {
+        let temp_dir = std::env::temp_dir().join("test_store_no_ext");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let config = test_config(temp_dir.to_str().unwrap());
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        // Store a file without extension
+        let cached = cache
+            .store_file(b"binary data".to_vec(), "noextension", "application/octet-stream")
+            .await
+            .unwrap();
+
+        // Should default to .bin extension
+        assert!(cached.path.to_str().unwrap().ends_with(".bin"));
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_mime_matches_edge_cases() {
+        // Empty pattern should not match
+        assert!(!mime_matches("image/png", ""));
+
+        // Partial prefix without wildcard should not match
+        assert!(!mime_matches("image/png", "image"));
+
+        // Different types should not match
+        assert!(!mime_matches("audio/mp3", "video/*"));
+
+        // Exact match works
+        assert!(mime_matches("application/json", "application/json"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_empty_allowed_list() {
+        let temp_dir = std::env::temp_dir().join("test_validate_empty_allowed");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        // Config with empty allowed list (should allow everything not blocked)
+        let mut config = test_config(temp_dir.to_str().unwrap());
+        config.allowed_mime_types = vec![];
+        config.blocked_mime_types = vec!["application/x-malware".to_string()];
+
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        // Any type should be allowed (except blocked)
+        assert!(cache.validate_mime_type("image/png").is_ok());
+        assert!(cache.validate_mime_type("video/mp4").is_ok());
+        assert!(cache.validate_mime_type("application/x-malware").is_err());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_cached_file_serialization() {
+        use std::path::PathBuf;
+
+        let cached = CachedFile {
+            file_id: "f_123456789012".to_string(),
+            filename: "test.txt".to_string(),
+            mime_type: "text/plain".to_string(),
+            size_bytes: 1024,
+            created_at: 1700000000,
+            path: PathBuf::from("/tmp/test.txt"),
+        };
+
+        // Serialize
+        let json = serde_json::to_string(&cached).unwrap();
+        assert!(json.contains("f_123456789012"));
+        assert!(json.contains("test.txt"));
+
+        // Deserialize
+        let deserialized: CachedFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.file_id, cached.file_id);
+        assert_eq!(deserialized.filename, cached.filename);
+        assert_eq!(deserialized.size_bytes, cached.size_bytes);
+    }
+
+    #[tokio::test]
+    async fn test_file_cache_stats_max_bytes() {
+        let temp_dir = std::env::temp_dir().join("test_stats_max_bytes");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let mut config = test_config(temp_dir.to_str().unwrap());
+        config.max_cache_size_mb = 50;
+
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        let stats = cache.stats().await;
+        assert_eq!(stats.max_bytes, 50 * 1024 * 1024);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
