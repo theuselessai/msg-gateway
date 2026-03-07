@@ -9,7 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-use crate::config;
+use crate::adapter::AdapterInstanceManager;
+use crate::config::{self, CredentialConfig};
 use crate::manager::CredentialManager;
 use crate::server::AppState;
 
@@ -18,6 +19,7 @@ pub async fn watch_config(
     config_path: String,
     state: Arc<AppState>,
     manager: Arc<CredentialManager>,
+    adapter_manager: Arc<AdapterInstanceManager>,
 ) -> anyhow::Result<()> {
     let (tx, mut rx) = mpsc::channel(10);
 
@@ -94,8 +96,8 @@ pub async fn watch_config(
                     *config = new_config.clone();
                 }
 
-                // Sync credential tasks
-                manager.sync_with_config(&old_config, &new_config).await;
+                // Sync adapter instances with new config
+                sync_adapters(&old_config, &new_config, &manager, &adapter_manager).await;
 
                 tracing::info!("Config reloaded successfully");
                 last_reload = std::time::Instant::now();
@@ -107,4 +109,124 @@ pub async fn watch_config(
     }
 
     Ok(())
+}
+
+/// Sync adapter instances with config changes
+async fn sync_adapters(
+    old_config: &config::Config,
+    new_config: &config::Config,
+    manager: &Arc<CredentialManager>,
+    adapter_manager: &Arc<AdapterInstanceManager>,
+) {
+    let old_creds = &old_config.credentials;
+    let new_creds = &new_config.credentials;
+
+    // Find credentials to stop (removed or deactivated)
+    for (id, old_cred) in old_creds {
+        match new_creds.get(id) {
+            None => {
+                // Credential removed
+                tracing::info!(credential_id = %id, "Credential removed, stopping adapter");
+                adapter_manager.stop(id).await.ok();
+                manager.stop_task(id).await;
+            }
+            Some(new_cred) if !new_cred.active && old_cred.active => {
+                // Credential deactivated
+                tracing::info!(credential_id = %id, "Credential deactivated, stopping adapter");
+                adapter_manager.stop(id).await.ok();
+                manager.stop_task(id).await;
+            }
+            Some(new_cred) if credential_changed(old_cred, new_cred) => {
+                // Credential config changed, restart
+                tracing::info!(credential_id = %id, "Credential config changed, restarting adapter");
+                adapter_manager.stop(id).await.ok();
+                manager.stop_task(id).await;
+                
+                if new_cred.active {
+                    spawn_adapter(id, new_cred, manager, adapter_manager).await;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Find credentials to start (new or activated)
+    for (id, new_cred) in new_creds {
+        if new_cred.active && !old_creds.contains_key(id) {
+            // New credential
+            tracing::info!(credential_id = %id, "New credential, starting adapter");
+            spawn_adapter(id, new_cred, manager, adapter_manager).await;
+        } else if let Some(old_cred) = old_creds.get(id) {
+            if new_cred.active && !old_cred.active {
+                // Credential activated
+                tracing::info!(credential_id = %id, "Credential activated, starting adapter");
+                spawn_adapter(id, new_cred, manager, adapter_manager).await;
+            }
+        }
+    }
+}
+
+/// Spawn an adapter instance for a credential
+async fn spawn_adapter(
+    credential_id: &str,
+    cred_config: &CredentialConfig,
+    manager: &Arc<CredentialManager>,
+    adapter_manager: &Arc<AdapterInstanceManager>,
+) {
+    match adapter_manager.spawn(
+        credential_id,
+        &cred_config.adapter,
+        &cred_config.token,
+        cred_config.config.as_ref(),
+    ).await {
+        Ok((instance_id, port)) => {
+            tracing::info!(
+                credential_id = %credential_id,
+                adapter = %cred_config.adapter,
+                instance_id = %instance_id,
+                port = %port,
+                "Adapter instance started"
+            );
+
+            // For external adapters, wait for them to become healthy
+            if cred_config.adapter != "generic" && port > 0 {
+                let ready = crate::adapter::wait_for_adapter_ready(
+                    adapter_manager,
+                    credential_id,
+                    std::time::Duration::from_secs(30),
+                    std::time::Duration::from_millis(500),
+                ).await;
+                
+                if ready {
+                    tracing::info!(
+                        credential_id = %credential_id,
+                        "Adapter is ready"
+                    );
+                } else {
+                    tracing::warn!(
+                        credential_id = %credential_id,
+                        "Adapter did not become ready within timeout"
+                    );
+                }
+            }
+
+            // Register in credential manager
+            manager.spawn_task(credential_id.to_string(), cred_config.clone()).await;
+        }
+        Err(e) => {
+            tracing::error!(
+                credential_id = %credential_id,
+                adapter = %cred_config.adapter,
+                error = %e,
+                "Failed to start adapter instance"
+            );
+        }
+    }
+}
+
+/// Check if credential config has changed in a way that requires instance restart
+fn credential_changed(old: &CredentialConfig, new: &CredentialConfig) -> bool {
+    old.adapter != new.adapter
+        || old.token != new.token
+        || old.config != new.config
 }

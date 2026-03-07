@@ -128,9 +128,15 @@ async fn main() -> anyhow::Result<()> {
     // Start config watcher in background
     let watcher_state = state.clone();
     let watcher_manager = manager.clone();
+    let watcher_adapter_manager = adapter_manager.clone();
     let watcher_path = config_path.clone();
     tokio::spawn(async move {
-        if let Err(e) = watcher::watch_config(watcher_path, watcher_state, watcher_manager).await {
+        if let Err(e) = watcher::watch_config(
+            watcher_path,
+            watcher_state,
+            watcher_manager,
+            watcher_adapter_manager,
+        ).await {
             tracing::error!(error = %e, "Config watcher failed");
         }
     });
