@@ -16,12 +16,14 @@ pub enum BackendError {
     Network(#[from] reqwest::Error),
 
     #[error("Backend returned error: {status} - {message}")]
-    BackendError { status: u16, message: String },
+    #[allow(clippy::enum_variant_names)]
+    BackendResponse { status: u16, message: String },
 
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 
     #[error("Timeout waiting for response")]
+    #[allow(dead_code)]
     Timeout,
 }
 
@@ -32,6 +34,7 @@ pub trait BackendAdapter: Send + Sync {
     async fn send_message(&self, message: &InboundMessage) -> Result<(), BackendError>;
 
     /// Whether this backend supports file attachments
+    #[allow(dead_code)]
     fn supports_files(&self) -> bool;
 }
 
@@ -44,10 +47,9 @@ pub struct PipelitAdapter {
 
 impl PipelitAdapter {
     pub fn new(target: &TargetConfig) -> Result<Self, BackendError> {
-        let inbound_url = target
-            .inbound_url
-            .clone()
-            .ok_or_else(|| BackendError::InvalidConfig("Pipelit target requires inbound_url".to_string()))?;
+        let inbound_url = target.inbound_url.clone().ok_or_else(|| {
+            BackendError::InvalidConfig("Pipelit target requires inbound_url".to_string())
+        })?;
 
         Ok(Self {
             client: reqwest::Client::new(),
@@ -72,8 +74,11 @@ impl BackendAdapter for PipelitAdapter {
             Ok(())
         } else {
             let status = response.status().as_u16();
-            let message = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            Err(BackendError::BackendError { status, message })
+            let message = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            Err(BackendError::BackendResponse { status, message })
         }
     }
 
@@ -97,10 +102,9 @@ pub struct OpencodeAdapter {
 
 impl OpencodeAdapter {
     pub fn new(target: &TargetConfig) -> Result<Self, BackendError> {
-        let base_url = target
-            .base_url
-            .clone()
-            .ok_or_else(|| BackendError::InvalidConfig("OpenCode target requires base_url".to_string()))?;
+        let base_url = target.base_url.clone().ok_or_else(|| {
+            BackendError::InvalidConfig("OpenCode target requires base_url".to_string())
+        })?;
 
         Ok(Self {
             client: reqwest::Client::new(),
@@ -116,7 +120,9 @@ impl BackendAdapter for OpencodeAdapter {
     async fn send_message(&self, _message: &InboundMessage) -> Result<(), BackendError> {
         // TODO: Implement OpenCode session management and prompt_async
         // For now, return an error
-        Err(BackendError::InvalidConfig("OpenCode adapter not yet implemented".to_string()))
+        Err(BackendError::InvalidConfig(
+            "OpenCode adapter not yet implemented".to_string(),
+        ))
     }
 
     fn supports_files(&self) -> bool {

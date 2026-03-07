@@ -220,7 +220,7 @@ def poll_updates():
 
 
 def send_message(chat_id, text, reply_to=None):
-    """Send a message to Telegram"""
+    """Send a text message to Telegram"""
     data = {
         "chat_id": chat_id,
         "text": text
@@ -236,6 +236,141 @@ def send_message(chat_id, text, reply_to=None):
         return str(msg.get("message_id", ""))
     else:
         raise Exception(f"Failed to send message: {result}")
+
+
+def send_document(chat_id, file_path, caption=None, reply_to=None):
+    """Send a document/file to Telegram using multipart form"""
+    import mimetypes
+    from urllib.request import urlopen
+    
+    # Read file
+    filename = os.path.basename(file_path)
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if not mime_type:
+        mime_type = "application/octet-stream"
+    
+    with open(file_path, "rb") as f:
+        file_data = f.read()
+    
+    # Build multipart form data
+    boundary = "----WebKitFormBoundary" + str(int(time.time() * 1000))
+    
+    body_parts = []
+    
+    # chat_id field
+    body_parts.append(f"--{boundary}".encode())
+    body_parts.append(b'Content-Disposition: form-data; name="chat_id"')
+    body_parts.append(b"")
+    body_parts.append(str(chat_id).encode())
+    
+    # caption field (optional)
+    if caption:
+        body_parts.append(f"--{boundary}".encode())
+        body_parts.append(b'Content-Disposition: form-data; name="caption"')
+        body_parts.append(b"")
+        body_parts.append(caption.encode())
+    
+    # reply_to_message_id field (optional)
+    if reply_to:
+        body_parts.append(f"--{boundary}".encode())
+        body_parts.append(b'Content-Disposition: form-data; name="reply_to_message_id"')
+        body_parts.append(b"")
+        body_parts.append(str(reply_to).encode())
+    
+    # document field
+    body_parts.append(f"--{boundary}".encode())
+    body_parts.append(f'Content-Disposition: form-data; name="document"; filename="{filename}"'.encode())
+    body_parts.append(f"Content-Type: {mime_type}".encode())
+    body_parts.append(b"")
+    body_parts.append(file_data)
+    
+    # End boundary
+    body_parts.append(f"--{boundary}--".encode())
+    
+    # Join with CRLF
+    body = b"\r\n".join(body_parts)
+    
+    # Send request
+    url = f"{TG_API_BASE}/sendDocument"
+    req = Request(url, data=body, method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    
+    try:
+        with urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode())
+            if result.get("ok"):
+                msg = result.get("result", {})
+                return str(msg.get("message_id", ""))
+            else:
+                raise Exception(f"Telegram API error: {result}")
+    except HTTPError as e:
+        body = e.read().decode() if e.fp else ""
+        raise Exception(f"Telegram API error {e.code}: {body}")
+
+
+def send_photo(chat_id, file_path, caption=None, reply_to=None):
+    """Send a photo to Telegram using multipart form"""
+    import mimetypes
+    from urllib.request import urlopen
+    
+    filename = os.path.basename(file_path)
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if not mime_type:
+        mime_type = "image/jpeg"
+    
+    with open(file_path, "rb") as f:
+        file_data = f.read()
+    
+    boundary = "----WebKitFormBoundary" + str(int(time.time() * 1000))
+    
+    body_parts = []
+    
+    # chat_id
+    body_parts.append(f"--{boundary}".encode())
+    body_parts.append(b'Content-Disposition: form-data; name="chat_id"')
+    body_parts.append(b"")
+    body_parts.append(str(chat_id).encode())
+    
+    # caption
+    if caption:
+        body_parts.append(f"--{boundary}".encode())
+        body_parts.append(b'Content-Disposition: form-data; name="caption"')
+        body_parts.append(b"")
+        body_parts.append(caption.encode())
+    
+    # reply_to_message_id
+    if reply_to:
+        body_parts.append(f"--{boundary}".encode())
+        body_parts.append(b'Content-Disposition: form-data; name="reply_to_message_id"')
+        body_parts.append(b"")
+        body_parts.append(str(reply_to).encode())
+    
+    # photo
+    body_parts.append(f"--{boundary}".encode())
+    body_parts.append(f'Content-Disposition: form-data; name="photo"; filename="{filename}"'.encode())
+    body_parts.append(f"Content-Type: {mime_type}".encode())
+    body_parts.append(b"")
+    body_parts.append(file_data)
+    
+    body_parts.append(f"--{boundary}--".encode())
+    
+    body = b"\r\n".join(body_parts)
+    
+    url = f"{TG_API_BASE}/sendPhoto"
+    req = Request(url, data=body, method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    
+    try:
+        with urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode())
+            if result.get("ok"):
+                msg = result.get("result", {})
+                return str(msg.get("message_id", ""))
+            else:
+                raise Exception(f"Telegram API error: {result}")
+    except HTTPError as e:
+        body = e.read().decode() if e.fp else ""
+        raise Exception(f"Telegram API error {e.code}: {body}")
 
 
 class AdapterHandler(BaseHTTPRequestHandler):
@@ -267,12 +402,26 @@ class AdapterHandler(BaseHTTPRequestHandler):
             try:
                 data = json.loads(body)
                 chat_id = data.get("chat_id")
-                text = data.get("text")
+                text = data.get("text", "")
                 reply_to = data.get("reply_to_message_id")
+                file_path = data.get("file_path")
                 
-                log(f"Sending message to chat {chat_id}: {text[:50]}...")
-                
-                message_id = send_message(chat_id, text, reply_to)
+                if file_path:
+                    # Send file
+                    import mimetypes
+                    mime_type, _ = mimetypes.guess_type(file_path)
+                    
+                    # Use sendPhoto for images, sendDocument for others
+                    if mime_type and mime_type.startswith("image/"):
+                        log(f"Sending photo to chat {chat_id}: {file_path}")
+                        message_id = send_photo(chat_id, file_path, caption=text or None, reply_to=reply_to)
+                    else:
+                        log(f"Sending document to chat {chat_id}: {file_path}")
+                        message_id = send_document(chat_id, file_path, caption=text or None, reply_to=reply_to)
+                else:
+                    # Send text only
+                    log(f"Sending message to chat {chat_id}: {text[:50]}...")
+                    message_id = send_message(chat_id, text, reply_to)
                 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")

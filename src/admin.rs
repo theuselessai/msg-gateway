@@ -3,10 +3,10 @@
 //! All endpoints require admin_token authentication.
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -79,7 +79,7 @@ pub async fn get_credential(
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
     let config = state.config.read().await;
-    
+
     let cred = config
         .credentials
         .get(&id)
@@ -130,7 +130,9 @@ pub async fn create_credential(
     // Update config in memory
     {
         let mut config = state.config.write().await;
-        config.credentials.insert(req.id.clone(), cred_config.clone());
+        config
+            .credentials
+            .insert(req.id.clone(), cred_config.clone());
     }
 
     // Write config to file
@@ -167,7 +169,7 @@ pub async fn update_credential(
     // Update config in memory
     {
         let mut config = state.config.write().await;
-        
+
         let cred = config
             .credentials
             .get_mut(&id)
@@ -269,7 +271,7 @@ pub async fn activate_credential(
 
     {
         let mut config = state.config.write().await;
-        
+
         let cred = config
             .credentials
             .get_mut(&id)
@@ -310,7 +312,7 @@ pub async fn deactivate_credential(
 
     {
         let mut config = state.config.write().await;
-        
+
         let cred = config
             .credentials
             .get_mut(&id)
@@ -349,15 +351,14 @@ pub async fn set_skip_reload(state: &AppState) {
 
 /// Write config to file atomically (write to temp, then rename)
 async fn write_config(state: &AppState) -> Result<(), AppError> {
-    let config_path = std::env::var("GATEWAY_CONFIG")
-        .unwrap_or_else(|_| "config.json".to_string());
+    let config_path = std::env::var("GATEWAY_CONFIG").unwrap_or_else(|_| "config.json".to_string());
 
     let config = state.config.read().await;
-    
+
     // Serialize config
     let json = serde_json::to_string_pretty(&*config)
         .map_err(|e| AppError::Internal(format!("Failed to serialize config: {}", e)))?;
-    
+
     drop(config); // Release lock before file I/O
 
     // Write to temp file

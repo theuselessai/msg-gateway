@@ -40,6 +40,7 @@ pub struct Attachment {
 
 /// Outbound message (Pipelit → Gateway → Client)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct OutboundMessage {
     pub credential_id: String,
     pub chat_id: String,
@@ -50,6 +51,7 @@ pub struct OutboundMessage {
 
 /// Response after sending a message
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct SendResponse {
     pub status: String,
     pub protocol_message_id: String,

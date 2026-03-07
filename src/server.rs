@@ -1,11 +1,11 @@
 use axum::{
+    Json, Router,
     body::Body,
     extract::State,
-    http::{header, Request},
+    http::{Request, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -43,10 +43,13 @@ pub async fn create_server(
     config: Config,
     manager: Arc<CredentialManager>,
     adapter_manager: Arc<AdapterInstanceManager>,
-) -> anyhow::Result<(Arc<AppState>, Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>)> {
+) -> anyhow::Result<(
+    Arc<AppState>,
+    Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>,
+)> {
     let listen_addr = config.gateway.listen.clone();
     let gateway_url = format!("http://{}", listen_addr);
-    
+
     // Default max buffer size: 1000 messages
     let max_buffer_size = 1000;
 
@@ -68,7 +71,7 @@ pub async fn create_server(
     } else {
         None
     };
-    
+
     let state = Arc::new(AppState {
         config: RwLock::new(config),
         ws_registry: generic::new_ws_registry(),
@@ -90,7 +93,10 @@ pub async fn create_server(
         .route("/files/{file_id}", get(serve_file))
         // Generic protocol endpoints
         .route("/api/v1/chat/{credential_id}", post(generic::chat_inbound))
-        .route("/ws/chat/{credential_id}/{chat_id}", get(generic::ws_handler))
+        .route(
+            "/ws/chat/{credential_id}/{chat_id}",
+            get(generic::ws_handler),
+        )
         // Admin routes (requires admin_token)
         .nest("/admin", admin_routes(state.clone()))
         .layer(TraceLayer::new_for_http())
@@ -98,7 +104,7 @@ pub async fn create_server(
 
     let listener = tokio::net::TcpListener::bind(&listen_addr).await?;
     tracing::info!("Listening on {}", listen_addr);
-    
+
     let server_future = Box::pin(async move {
         axum::serve(listener, app).await?;
         Ok(())
@@ -109,15 +115,27 @@ pub async fn create_server(
 
 fn admin_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
     use axum::routing::patch;
-    
+
     Router::new()
         .route("/health", get(admin_health))
-        .route("/credentials", get(list_credentials).post(admin::create_credential))
-        .route("/credentials/{id}", get(admin::get_credential)
-            .put(admin::update_credential)
-            .delete(admin::delete_credential))
-        .route("/credentials/{id}/activate", patch(admin::activate_credential))
-        .route("/credentials/{id}/deactivate", patch(admin::deactivate_credential))
+        .route(
+            "/credentials",
+            get(list_credentials).post(admin::create_credential),
+        )
+        .route(
+            "/credentials/{id}",
+            get(admin::get_credential)
+                .put(admin::update_credential)
+                .delete(admin::delete_credential),
+        )
+        .route(
+            "/credentials/{id}/activate",
+            patch(admin::activate_credential),
+        )
+        .route(
+            "/credentials/{id}/deactivate",
+            patch(admin::deactivate_credential),
+        )
         .layer(middleware::from_fn_with_state(state, admin_auth_middleware))
 }
 
@@ -212,7 +230,7 @@ async fn admin_health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 // List all credentials (tokens redacted)
 async fn list_credentials(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let config = state.config.read().await;
-    
+
     let credentials: Vec<_> = config
         .credentials
         .iter()
@@ -230,6 +248,20 @@ async fn list_credentials(State(state): State<Arc<AppState>>) -> impl IntoRespon
     Json(json!({
         "credentials": credentials
     }))
+}
+
+/// File attachment in send request
+#[derive(Debug, serde::Deserialize)]
+struct SendFileAttachment {
+    /// URL to download the file from
+    url: String,
+    /// Original filename
+    filename: String,
+    /// MIME type
+    mime_type: String,
+    /// Optional auth header for downloading
+    #[serde(default)]
+    auth_header: Option<String>,
 }
 
 // Send message endpoint (Pipelit → Gateway → Protocol)
@@ -267,10 +299,12 @@ async fn send_message(
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Internal("Missing chat_id".to_string()))?;
 
-    let text = payload
-        .get("text")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::Internal("Missing text".to_string()))?;
+    let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or(""); // Text is optional when sending file
+
+    // Parse optional file attachment
+    let file_attachment: Option<SendFileAttachment> = payload
+        .get("file")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
 
     // Check credential exists and is active
     let credential = config
@@ -288,46 +322,84 @@ async fn send_message(
     let message_id = format!("{}_{}", adapter, uuid::Uuid::new_v4());
     let timestamp = chrono::Utc::now();
 
+    // Handle file attachment: download and cache
+    let file_path: Option<String> = if let Some(file) = file_attachment {
+        if let Some(ref file_cache) = state.file_cache {
+            match file_cache
+                .download_and_cache(
+                    &file.url,
+                    file.auth_header.as_deref(),
+                    &file.filename,
+                    &file.mime_type,
+                )
+                .await
+            {
+                Ok(cached) => {
+                    tracing::info!(
+                        file_id = %cached.file_id,
+                        filename = %file.filename,
+                        "Outbound file cached"
+                    );
+                    Some(cached.path.to_string_lossy().to_string())
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        filename = %file.filename,
+                        "Failed to cache outbound file"
+                    );
+                    return Err(AppError::Internal(format!(
+                        "Failed to download file: {}",
+                        e
+                    )));
+                }
+            }
+        } else {
+            tracing::warn!("File attachment in send request but file cache not configured");
+            return Err(AppError::Internal("File cache not configured".to_string()));
+        }
+    } else {
+        None
+    };
+
     // Route to appropriate adapter
     if adapter == "generic" {
         // Built-in generic adapter: send via WebSocket
-            let ws_msg = WsOutboundMessage {
-                text: text.to_string(),
-                timestamp,
-                message_id: message_id.clone(),
-            };
-            
-            let sent = generic::send_to_ws(
-                &state.ws_registry,
-                credential_id,
-                chat_id,
-                ws_msg,
-            ).await;
+        let ws_msg = WsOutboundMessage {
+            text: text.to_string(),
+            timestamp,
+            message_id: message_id.clone(),
+        };
 
-            if sent {
-                tracing::info!(
-                    credential_id = credential_id,
-                    chat_id = chat_id,
-                    "Message sent via WebSocket"
-                );
-            } else {
-                tracing::warn!(
-                    credential_id = credential_id,
-                    chat_id = chat_id,
-                    "No WebSocket connection, message dropped"
-                );
-            }
+        let sent = generic::send_to_ws(&state.ws_registry, credential_id, chat_id, ws_msg).await;
+
+        if sent {
+            tracing::info!(
+                credential_id = credential_id,
+                chat_id = chat_id,
+                "Message sent via WebSocket"
+            );
+        } else {
+            tracing::warn!(
+                credential_id = credential_id,
+                chat_id = chat_id,
+                "No WebSocket connection, message dropped"
+            );
+        }
     } else {
         // External adapter: POST to adapter's /send endpoint
         let port = state.adapter_manager.get_port(credential_id).await;
-        
+
         match port {
             Some(port) if port > 0 => {
                 let send_req = crate::adapter::AdapterSendRequest {
                     chat_id: chat_id.to_string(),
                     text: text.to_string(),
-                    reply_to_message_id: payload.get("reply_to_message_id").and_then(|v| v.as_str()).map(String::from),
-                    file_path: None, // TODO: Handle file attachments
+                    reply_to_message_id: payload
+                        .get("reply_to_message_id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    file_path: file_path.clone(),
                 };
 
                 let client = reqwest::Client::new();
@@ -410,13 +482,11 @@ async fn adapter_inbound(
         })?;
 
     let config = state.config.read().await;
-    
+
     let credential = config
         .credentials
         .get(&credential_id)
-        .ok_or_else(|| {
-            AppError::CredentialNotFound(credential_id.clone())
-        })?;
+        .ok_or_else(|| AppError::CredentialNotFound(credential_id.clone()))?;
 
     if !credential.active {
         return Err(AppError::CredentialInactive(credential_id.clone()));
@@ -427,9 +497,8 @@ async fn adapter_inbound(
 
     // Resolve target for this credential
     let target = crate::backend::resolve_target(credential, &config.gateway.default_target);
-    let backend_adapter = crate::backend::create_adapter(target).map_err(|e| {
-        AppError::Internal(format!("Failed to create backend adapter: {}", e))
-    })?;
+    let backend_adapter = crate::backend::create_adapter(target)
+        .map_err(|e| AppError::Internal(format!("Failed to create backend adapter: {}", e)))?;
     drop(config);
 
     // Build normalized inbound message
@@ -444,12 +513,15 @@ async fn adapter_inbound(
     let mut attachments = vec![];
     if let Some(ref file_info) = payload.file {
         if let Some(ref file_cache) = state.file_cache {
-            match file_cache.download_and_cache(
-                &file_info.url,
-                file_info.auth_header.as_deref(),
-                &file_info.filename,
-                &file_info.mime_type,
-            ).await {
+            match file_cache
+                .download_and_cache(
+                    &file_info.url,
+                    file_info.auth_header.as_deref(),
+                    &file_info.filename,
+                    &file_info.mime_type,
+                )
+                .await
+            {
                 Ok(cached) => {
                     attachments.push(crate::message::Attachment {
                         filename: cached.filename,
@@ -514,7 +586,7 @@ async fn adapter_inbound(
         // Forward to backend
         let instance_id = payload.instance_id.clone();
         let cred_id = credential_id.clone();
-        
+
         tokio::spawn(async move {
             match backend_adapter.send_message(&inbound).await {
                 Ok(()) => {
@@ -570,14 +642,16 @@ async fn serve_file(
     drop(config);
 
     // Get file cache
-    let file_cache = state.file_cache.as_ref().ok_or_else(|| {
-        AppError::Internal("File cache not configured".to_string())
-    })?;
+    let file_cache = state
+        .file_cache
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("File cache not configured".to_string()))?;
 
     // Get file metadata
-    let cached = file_cache.get(&file_id).await.ok_or_else(|| {
-        AppError::NotFound(format!("File not found: {}", file_id))
-    })?;
+    let cached = file_cache
+        .get(&file_id)
+        .await
+        .ok_or_else(|| AppError::NotFound(format!("File not found: {}", file_id)))?;
 
     // Read file content
     let content = file_cache.read_file(&file_id).await?;

@@ -1,17 +1,20 @@
 //! WebSocket integration test
-//! 
-//! Run with: cargo test --test ws_test -- --nocapture
+//!
+//! This test requires a running server. Run it manually with:
+//!   1. Start server: GATEWAY_CONFIG=config.example.json cargo run
+//!   2. Run test: cargo test --test ws_test -- --ignored --nocapture
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 #[tokio::test]
+#[ignore = "requires running server - run with --ignored flag"]
 async fn test_websocket_flow() {
     // This test requires the server to be running
     // Start server: GATEWAY_CONFIG=config.example.json cargo run
-    
+
     let ws_url = "ws://127.0.0.1:8080/ws/chat/generic_chat/test_session";
-    
+
     // Connect with auth header
     let request = http::Request::builder()
         .uri(ws_url)
@@ -27,7 +30,7 @@ async fn test_websocket_flow() {
     let (ws_stream, _) = connect_async(request).await.expect("Failed to connect");
     println!("WebSocket connected!");
 
-    let (mut write, mut read) = ws_stream.split();
+    let (_write, mut read) = ws_stream.split();
 
     // Spawn task to read messages
     let read_task = tokio::spawn(async move {
@@ -71,10 +74,7 @@ async fn test_websocket_flow() {
     println!("Send response: {:?}", resp.status());
 
     // Wait for message with timeout
-    let received = tokio::time::timeout(
-        tokio::time::Duration::from_secs(2),
-        read_task
-    ).await;
+    let received = tokio::time::timeout(tokio::time::Duration::from_secs(2), read_task).await;
 
     match received {
         Ok(Ok(msg)) => {

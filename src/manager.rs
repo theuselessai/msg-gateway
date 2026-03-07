@@ -13,6 +13,7 @@ use crate::config::{Config, CredentialConfig};
 
 /// Status of an adapter instance
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum InstanceStatus {
     Starting,
     Running,
@@ -22,6 +23,7 @@ pub enum InstanceStatus {
 }
 
 /// Info about a running adapter instance
+#[allow(dead_code)]
 pub struct InstanceInfo {
     pub instance_id: String,
     pub credential_id: String,
@@ -33,7 +35,13 @@ pub struct InstanceInfo {
 
 /// Registry of running adapter instances
 pub struct TaskRegistry {
-    instances: RwLock<HashMap<String, InstanceInfo>>,  // credential_id -> instance
+    instances: RwLock<HashMap<String, InstanceInfo>>, // credential_id -> instance
+}
+
+impl Default for TaskRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TaskRegistry {
@@ -68,9 +76,12 @@ impl TaskRegistry {
     }
 
     /// Get instance by credential_id
+    #[allow(dead_code)]
     pub async fn get_instance(&self, credential_id: &str) -> Option<(String, u16)> {
         let instances = self.instances.read().await;
-        instances.get(credential_id).map(|info| (info.instance_id.clone(), info.port))
+        instances
+            .get(credential_id)
+            .map(|info| (info.instance_id.clone(), info.port))
     }
 
     /// Register a new instance
@@ -95,6 +106,7 @@ impl TaskRegistry {
     }
 
     /// Update instance status
+    #[allow(dead_code)]
     pub async fn update_status(&self, credential_id: &str, status: InstanceStatus) {
         let mut instances = self.instances.write().await;
         if let Some(info) = instances.get_mut(credential_id) {
@@ -114,6 +126,12 @@ pub struct CredentialManager {
     pub registry: Arc<TaskRegistry>,
 }
 
+impl Default for CredentialManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CredentialManager {
     pub fn new() -> Self {
         Self {
@@ -122,6 +140,7 @@ impl CredentialManager {
     }
 
     /// Spawn instances for all active credentials in config
+    #[allow(dead_code)]
     pub async fn start_all(&self, config: &Config) {
         for (credential_id, cred_config) in &config.credentials {
             if cred_config.active {
@@ -199,6 +218,7 @@ impl CredentialManager {
     }
 
     /// Sync running instances with config
+    #[allow(dead_code)]
     pub async fn sync_with_config(&self, old_config: &Config, new_config: &Config) {
         let old_creds = &old_config.credentials;
         let new_creds = &new_config.credentials;
@@ -234,12 +254,13 @@ impl CredentialManager {
                 // New credential
                 tracing::info!(credential_id = %id, "New credential, starting instance");
                 self.spawn_task(id.clone(), new_cred.clone()).await;
-            } else if let Some(old_cred) = old_creds.get(id) {
-                if new_cred.active && !old_cred.active {
-                    // Credential activated
-                    tracing::info!(credential_id = %id, "Credential activated, starting instance");
-                    self.spawn_task(id.clone(), new_cred.clone()).await;
-                }
+            } else if let Some(old_cred) = old_creds.get(id)
+                && new_cred.active
+                && !old_cred.active
+            {
+                // Credential activated
+                tracing::info!(credential_id = %id, "Credential activated, starting instance");
+                self.spawn_task(id.clone(), new_cred.clone()).await;
             }
         }
     }
@@ -258,8 +279,7 @@ impl CredentialManager {
 }
 
 /// Check if credential config has changed in a way that requires instance restart
+#[allow(dead_code)]
 fn credential_changed(old: &CredentialConfig, new: &CredentialConfig) -> bool {
-    old.adapter != new.adapter
-        || old.token != new.token
-        || old.config != new.config
+    old.adapter != new.adapter || old.token != new.token || old.config != new.config
 }

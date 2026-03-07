@@ -39,20 +39,11 @@ pub struct AdapterDef {
 pub fn load_adapter_def(adapter_dir: &Path) -> Result<AdapterDef, AppError> {
     let adapter_json = adapter_dir.join("adapter.json");
     let content = std::fs::read_to_string(&adapter_json).map_err(|e| {
-        AppError::Config(format!(
-            "Failed to read {}: {}",
-            adapter_json.display(),
-            e
-        ))
+        AppError::Config(format!("Failed to read {}: {}", adapter_json.display(), e))
     })?;
 
-    serde_json::from_str(&content).map_err(|e| {
-        AppError::Config(format!(
-            "Failed to parse {}: {}",
-            adapter_json.display(),
-            e
-        ))
-    })
+    serde_json::from_str(&content)
+        .map_err(|e| AppError::Config(format!("Failed to parse {}: {}", adapter_json.display(), e)))
 }
 
 /// Discover all adapters in the adapters directory
@@ -76,9 +67,8 @@ pub fn discover_adapters(adapters_dir: &Path) -> Result<HashMap<String, AdapterD
     })?;
 
     for entry in entries {
-        let entry = entry.map_err(|e| {
-            AppError::Config(format!("Failed to read directory entry: {}", e))
-        })?;
+        let entry = entry
+            .map_err(|e| AppError::Config(format!("Failed to read directory entry: {}", e)))?;
 
         let path = entry.path();
         if path.is_dir() {
@@ -122,6 +112,7 @@ pub enum AdapterHealth {
 }
 
 /// Running adapter process info
+#[allow(dead_code)]
 pub struct AdapterProcess {
     pub instance_id: String,
     pub credential_id: String,
@@ -195,7 +186,10 @@ impl AdapterInstanceManager {
 
         // Construct gateway URL from listen address
         let gateway_url = if gateway_listen.starts_with("0.0.0.0") {
-            format!("http://127.0.0.1:{}", gateway_listen.split(':').last().unwrap_or("8080"))
+            format!(
+                "http://127.0.0.1:{}",
+                gateway_listen.split(':').next_back().unwrap_or("8080")
+            )
         } else {
             format!("http://{}", gateway_listen)
         };
@@ -210,6 +204,7 @@ impl AdapterInstanceManager {
     }
 
     /// Check if an adapter exists
+    #[allow(dead_code)]
     pub fn has_adapter(&self, name: &str) -> bool {
         name == "generic" || self.adapters.contains_key(name)
     }
@@ -229,21 +224,24 @@ impl AdapterInstanceManager {
         }
 
         // Get adapter definition
-        let adapter_def = self.adapters.get(adapter_name).ok_or_else(|| {
-            AppError::Config(format!("Adapter not found: {}", adapter_name))
-        })?;
+        let adapter_def = self
+            .adapters
+            .get(adapter_name)
+            .ok_or_else(|| AppError::Config(format!("Adapter not found: {}", adapter_name)))?;
 
         // Allocate port
-        let port = self.port_allocator.allocate().await.ok_or_else(|| {
-            AppError::Internal("No available ports for adapter".to_string())
-        })?;
+        let port = self
+            .port_allocator
+            .allocate()
+            .await
+            .ok_or_else(|| AppError::Internal("No available ports for adapter".to_string()))?;
 
         let instance_id = format!("{}_{}", adapter_name, uuid::Uuid::new_v4());
 
         // Build command
         let adapter_path = Path::new(&self.adapters_dir).join(adapter_name);
         let mut cmd = Command::new(&adapter_def.command);
-        
+
         cmd.args(&adapter_def.args)
             .current_dir(&adapter_path)
             .env("INSTANCE_ID", &instance_id)
@@ -256,7 +254,10 @@ impl AdapterInstanceManager {
             .stderr(Stdio::piped());
 
         if let Some(cfg) = config {
-            cmd.env("CREDENTIAL_CONFIG", serde_json::to_string(cfg).unwrap_or_default());
+            cmd.env(
+                "CREDENTIAL_CONFIG",
+                serde_json::to_string(cfg).unwrap_or_default(),
+            );
         }
 
         tracing::info!(
@@ -267,9 +268,9 @@ impl AdapterInstanceManager {
             "Spawning adapter process"
         );
 
-        let process = cmd.spawn().map_err(|e| {
-            AppError::Internal(format!("Failed to spawn adapter process: {}", e))
-        })?;
+        let process = cmd
+            .spawn()
+            .map_err(|e| AppError::Internal(format!("Failed to spawn adapter process: {}", e)))?;
 
         // Store process info
         let mut processes = self.processes.write().await;
@@ -296,7 +297,7 @@ impl AdapterInstanceManager {
     /// Stop an adapter process
     pub async fn stop(&self, credential_id: &str) -> Result<(), AppError> {
         let mut processes = self.processes.write().await;
-        
+
         if let Some(mut process_info) = processes.remove(credential_id) {
             // Release port
             if process_info.port > 0 {
@@ -329,12 +330,14 @@ impl AdapterInstanceManager {
     }
 
     /// Get instance_id for a credential
+    #[allow(dead_code)]
     pub async fn get_instance_id(&self, credential_id: &str) -> Option<String> {
         let processes = self.processes.read().await;
         processes.get(credential_id).map(|p| p.instance_id.clone())
     }
 
     /// Check if adapter process is running for a credential
+    #[allow(dead_code)]
     pub async fn is_running(&self, credential_id: &str) -> bool {
         let processes = self.processes.read().await;
         processes.contains_key(credential_id)
@@ -403,7 +406,12 @@ impl AdapterInstanceManager {
     }
 
     /// Update health state for a credential
-    pub async fn update_health(&self, credential_id: &str, health: AdapterHealth, reset_failures: bool) {
+    pub async fn update_health(
+        &self,
+        credential_id: &str,
+        health: AdapterHealth,
+        reset_failures: bool,
+    ) {
         let mut processes = self.processes.write().await;
         if let Some(process) = processes.get_mut(credential_id) {
             process.health = health;
@@ -416,9 +424,12 @@ impl AdapterInstanceManager {
     }
 
     /// Get health state for a credential
+    #[allow(dead_code)]
     pub async fn get_health(&self, credential_id: &str) -> Option<(AdapterHealth, u32)> {
         let processes = self.processes.read().await;
-        processes.get(credential_id).map(|p| (p.health, p.consecutive_failures))
+        processes
+            .get(credential_id)
+            .map(|p| (p.health, p.consecutive_failures))
     }
 
     /// Check if adapter process has exited
@@ -471,12 +482,15 @@ impl AdapterInstanceManager {
     /// Returns Ok(true) if restart succeeded, Ok(false) if should wait (backoff), Err on failure
     pub async fn restart(&self, credential_id: &str, max_restarts: u32) -> Result<bool, AppError> {
         // Get info needed for restart
-        let (adapter_name, token, config, restart_count, last_restart, old_port) = {
+        let (adapter_name, token, config, restart_count, last_restart, _old_port) = {
             let processes = self.processes.read().await;
             let process = processes.get(credential_id).ok_or_else(|| {
-                AppError::Internal(format!("Process not found for credential: {}", credential_id))
+                AppError::Internal(format!(
+                    "Process not found for credential: {}",
+                    credential_id
+                ))
             })?;
-            
+
             (
                 process.adapter_name.clone(),
                 process.token.clone(),
@@ -527,7 +541,9 @@ impl AdapterInstanceManager {
         self.stop(credential_id).await?;
 
         // Respawn with same settings
-        let result = self.spawn(credential_id, &adapter_name, &token, config.as_ref()).await;
+        let result = self
+            .spawn(credential_id, &adapter_name, &token, config.as_ref())
+            .await;
 
         // Update restart tracking
         if result.is_ok() {
@@ -544,19 +560,20 @@ impl AdapterInstanceManager {
     /// Reset restart count for a credential (called when adapter is healthy for a while)
     pub async fn reset_restart_count(&self, credential_id: &str) {
         let mut processes = self.processes.write().await;
-        if let Some(process) = processes.get_mut(credential_id) {
-            if process.restart_count > 0 {
-                tracing::debug!(
-                    credential_id = %credential_id,
-                    old_count = %process.restart_count,
-                    "Resetting restart count"
-                );
-                process.restart_count = 0;
-            }
+        if let Some(process) = processes.get_mut(credential_id)
+            && process.restart_count > 0
+        {
+            tracing::debug!(
+                credential_id = %credential_id,
+                old_count = %process.restart_count,
+                "Resetting restart count"
+            );
+            process.restart_count = 0;
         }
     }
 
     /// Get restart info for a credential
+    #[allow(dead_code)]
     pub async fn get_restart_info(&self, credential_id: &str) -> Option<(u32, Option<Duration>)> {
         let processes = self.processes.read().await;
         processes.get(credential_id).map(|p| {
@@ -601,7 +618,7 @@ pub async fn start_adapter_health_monitor(
         max_failures,
         ..Default::default()
     };
-    
+
     start_adapter_health_monitor_with_config(manager, config).await;
 }
 
@@ -612,7 +629,7 @@ pub async fn start_adapter_health_monitor_with_config(
 ) {
     let interval = Duration::from_secs(config.interval_secs);
     let healthy_reset = Duration::from_secs(config.healthy_reset_secs);
-    
+
     tracing::info!(
         interval_secs = %config.interval_secs,
         max_failures = %config.max_failures,
@@ -627,7 +644,7 @@ pub async fn start_adapter_health_monitor_with_config(
         tokio::time::sleep(interval).await;
 
         let health_status = manager.get_all_health().await;
-        
+
         for (credential_id, (adapter_name, current_health, consecutive_failures)) in health_status {
             // Skip generic adapter (built-in)
             if adapter_name == "generic" {
@@ -642,7 +659,7 @@ pub async fn start_adapter_health_monitor_with_config(
                     "Adapter process died, attempting restart"
                 );
                 healthy_since.remove(&credential_id);
-                
+
                 match manager.restart(&credential_id, config.max_restarts).await {
                     Ok(true) => {
                         tracing::info!(
@@ -655,7 +672,8 @@ pub async fn start_adapter_health_monitor_with_config(
                             &credential_id,
                             Duration::from_secs(30),
                             Duration::from_millis(500),
-                        ).await;
+                        )
+                        .await;
                         if ready {
                             tracing::info!(
                                 credential_id = %credential_id,
@@ -682,7 +700,7 @@ pub async fn start_adapter_health_monitor_with_config(
 
             // Run health check
             let health = manager.check_health(&credential_id).await;
-            
+
             match health {
                 AdapterHealth::Healthy => {
                     if current_health != AdapterHealth::Healthy {
@@ -693,8 +711,10 @@ pub async fn start_adapter_health_monitor_with_config(
                         );
                         healthy_since.insert(credential_id.clone(), std::time::Instant::now());
                     }
-                    manager.update_health(&credential_id, AdapterHealth::Healthy, true).await;
-                    
+                    manager
+                        .update_health(&credential_id, AdapterHealth::Healthy, true)
+                        .await;
+
                     // Check if we should reset restart count
                     if let Some(since) = healthy_since.get(&credential_id) {
                         if since.elapsed() >= healthy_reset {
@@ -708,8 +728,10 @@ pub async fn start_adapter_health_monitor_with_config(
                 }
                 AdapterHealth::Unhealthy => {
                     healthy_since.remove(&credential_id);
-                    manager.update_health(&credential_id, AdapterHealth::Unhealthy, false).await;
-                    
+                    manager
+                        .update_health(&credential_id, AdapterHealth::Unhealthy, false)
+                        .await;
+
                     let new_failures = consecutive_failures + 1;
                     if new_failures >= config.max_failures {
                         tracing::warn!(
@@ -718,7 +740,7 @@ pub async fn start_adapter_health_monitor_with_config(
                             consecutive_failures = %new_failures,
                             "Adapter exceeded max failures, attempting restart"
                         );
-                        
+
                         match manager.restart(&credential_id, config.max_restarts).await {
                             Ok(true) => {
                                 tracing::info!(
@@ -731,7 +753,8 @@ pub async fn start_adapter_health_monitor_with_config(
                                     &credential_id,
                                     Duration::from_secs(30),
                                     Duration::from_millis(500),
-                                ).await;
+                                )
+                                .await;
                                 if ready {
                                     tracing::info!(
                                         credential_id = %credential_id,
@@ -776,16 +799,18 @@ pub async fn wait_for_adapter_ready(
     poll_interval: Duration,
 ) -> bool {
     let start = std::time::Instant::now();
-    
+
     while start.elapsed() < timeout {
         let health = manager.check_health(credential_id).await;
         if health == AdapterHealth::Healthy {
-            manager.update_health(credential_id, AdapterHealth::Healthy, true).await;
+            manager
+                .update_health(credential_id, AdapterHealth::Healthy, true)
+                .await;
             return true;
         }
         tokio::time::sleep(poll_interval).await;
     }
-    
+
     tracing::warn!(
         credential_id = %credential_id,
         timeout_secs = timeout.as_secs(),
@@ -841,4 +866,137 @@ pub struct AdapterSendRequest {
 #[derive(Debug, Deserialize)]
 pub struct AdapterSendResponse {
     pub protocol_message_id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_port_allocator_basic() {
+        let allocator = PortAllocator::new((9000, 9002));
+
+        // Allocate first port
+        let port1 = allocator.allocate().await;
+        assert_eq!(port1, Some(9000));
+
+        // Allocate second port
+        let port2 = allocator.allocate().await;
+        assert_eq!(port2, Some(9001));
+
+        // Allocate third port
+        let port3 = allocator.allocate().await;
+        assert_eq!(port3, Some(9002));
+
+        // No more ports available
+        let port4 = allocator.allocate().await;
+        assert_eq!(port4, None);
+    }
+
+    #[tokio::test]
+    async fn test_port_allocator_release() {
+        let allocator = PortAllocator::new((9000, 9001));
+
+        // Allocate all ports
+        let port1 = allocator.allocate().await.unwrap();
+        let _port2 = allocator.allocate().await.unwrap();
+        assert!(allocator.allocate().await.is_none());
+
+        // Release first port
+        allocator.release(port1).await;
+
+        // Should be able to allocate again
+        let port3 = allocator.allocate().await;
+        assert_eq!(port3, Some(9000));
+    }
+
+    #[test]
+    fn test_adapter_def_parse() {
+        let json = r#"{
+            "name": "telegram",
+            "version": "1.0.0",
+            "command": "python3",
+            "args": ["main.py"]
+        }"#;
+
+        let def: AdapterDef = serde_json::from_str(json).unwrap();
+        assert_eq!(def.name, "telegram");
+        assert_eq!(def.version, "1.0.0");
+        assert_eq!(def.command, "python3");
+        assert_eq!(def.args, vec!["main.py"]);
+    }
+
+    #[test]
+    fn test_adapter_def_parse_minimal() {
+        let json = r#"{
+            "name": "test",
+            "version": "0.1.0",
+            "command": "node"
+        }"#;
+
+        let def: AdapterDef = serde_json::from_str(json).unwrap();
+        assert_eq!(def.name, "test");
+        assert!(def.args.is_empty());
+    }
+
+    #[test]
+    fn test_health_monitor_config_default() {
+        let config = HealthMonitorConfig::default();
+        assert_eq!(config.interval_secs, 30);
+        assert_eq!(config.max_failures, 3);
+        assert_eq!(config.max_restarts, 5);
+        assert_eq!(config.healthy_reset_secs, 300);
+    }
+
+    #[test]
+    fn test_adapter_inbound_request_parse() {
+        let json = r#"{
+            "instance_id": "telegram_abc123",
+            "chat_id": "12345",
+            "message_id": "msg_001",
+            "from": {
+                "id": "user_1",
+                "username": "testuser",
+                "display_name": "Test User"
+            },
+            "text": "Hello, world!"
+        }"#;
+
+        let req: AdapterInboundRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.instance_id, "telegram_abc123");
+        assert_eq!(req.chat_id, "12345");
+        assert_eq!(req.text, "Hello, world!");
+        assert_eq!(req.from.id, "user_1");
+        assert_eq!(req.from.username, Some("testuser".to_string()));
+    }
+
+    #[test]
+    fn test_adapter_send_request_serialize() {
+        let req = AdapterSendRequest {
+            chat_id: "12345".to_string(),
+            text: "Hello!".to_string(),
+            reply_to_message_id: None,
+            file_path: None,
+        };
+
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"chat_id\":\"12345\""));
+        assert!(json.contains("\"text\":\"Hello!\""));
+        // Optional fields should be skipped
+        assert!(!json.contains("reply_to_message_id"));
+        assert!(!json.contains("file_path"));
+    }
+
+    #[test]
+    fn test_adapter_send_request_with_reply() {
+        let req = AdapterSendRequest {
+            chat_id: "12345".to_string(),
+            text: "Reply!".to_string(),
+            reply_to_message_id: Some("msg_001".to_string()),
+            file_path: None,
+        };
+
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"reply_to_message_id\":\"msg_001\""));
+    }
 }

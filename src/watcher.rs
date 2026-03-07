@@ -3,7 +3,7 @@
 //! Watches the config file for changes and triggers hot reload.
 //! Uses debouncing to avoid rapid reloads from multiple file events.
 
-use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher, EventKind};
+use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,7 +42,7 @@ pub async fn watch_config(
     // Watch the config file's parent directory
     let path = Path::new(&config_path);
     let watch_path = path.parent().unwrap_or(Path::new("."));
-    
+
     watcher.watch(watch_path, RecursiveMode::NonRecursive)?;
 
     tracing::info!(
@@ -75,11 +75,11 @@ pub async fn watch_config(
         // Check if this change was triggered by Admin API
         {
             let skip_until = state.skip_reload_until.read().await;
-            if let Some(until) = *skip_until {
-                if std::time::Instant::now() < until {
-                    tracing::debug!("Skipping reload (triggered by Admin API)");
-                    continue;
-                }
+            if let Some(until) = *skip_until
+                && std::time::Instant::now() < until
+            {
+                tracing::debug!("Skipping reload (triggered by Admin API)");
+                continue;
             }
         }
 
@@ -89,7 +89,7 @@ pub async fn watch_config(
         match config::load_config(&config_path) {
             Ok(new_config) => {
                 let old_config = state.config.read().await.clone();
-                
+
                 // Update config in state
                 {
                     let mut config = state.config.write().await;
@@ -141,7 +141,7 @@ async fn sync_adapters(
                 tracing::info!(credential_id = %id, "Credential config changed, restarting adapter");
                 adapter_manager.stop(id).await.ok();
                 manager.stop_task(id).await;
-                
+
                 if new_cred.active {
                     spawn_adapter(id, new_cred, manager, adapter_manager).await;
                 }
@@ -156,12 +156,13 @@ async fn sync_adapters(
             // New credential
             tracing::info!(credential_id = %id, "New credential, starting adapter");
             spawn_adapter(id, new_cred, manager, adapter_manager).await;
-        } else if let Some(old_cred) = old_creds.get(id) {
-            if new_cred.active && !old_cred.active {
-                // Credential activated
-                tracing::info!(credential_id = %id, "Credential activated, starting adapter");
-                spawn_adapter(id, new_cred, manager, adapter_manager).await;
-            }
+        } else if let Some(old_cred) = old_creds.get(id)
+            && new_cred.active
+            && !old_cred.active
+        {
+            // Credential activated
+            tracing::info!(credential_id = %id, "Credential activated, starting adapter");
+            spawn_adapter(id, new_cred, manager, adapter_manager).await;
         }
     }
 }
@@ -173,12 +174,15 @@ async fn spawn_adapter(
     manager: &Arc<CredentialManager>,
     adapter_manager: &Arc<AdapterInstanceManager>,
 ) {
-    match adapter_manager.spawn(
-        credential_id,
-        &cred_config.adapter,
-        &cred_config.token,
-        cred_config.config.as_ref(),
-    ).await {
+    match adapter_manager
+        .spawn(
+            credential_id,
+            &cred_config.adapter,
+            &cred_config.token,
+            cred_config.config.as_ref(),
+        )
+        .await
+    {
         Ok((instance_id, port)) => {
             tracing::info!(
                 credential_id = %credential_id,
@@ -195,8 +199,9 @@ async fn spawn_adapter(
                     credential_id,
                     std::time::Duration::from_secs(30),
                     std::time::Duration::from_millis(500),
-                ).await;
-                
+                )
+                .await;
+
                 if ready {
                     tracing::info!(
                         credential_id = %credential_id,
@@ -211,7 +216,9 @@ async fn spawn_adapter(
             }
 
             // Register in credential manager
-            manager.spawn_task(credential_id.to_string(), cred_config.clone()).await;
+            manager
+                .spawn_task(credential_id.to_string(), cred_config.clone())
+                .await;
         }
         Err(e) => {
             tracing::error!(
@@ -226,7 +233,5 @@ async fn spawn_adapter(
 
 /// Check if credential config has changed in a way that requires instance restart
 fn credential_changed(old: &CredentialConfig, new: &CredentialConfig) -> bool {
-    old.adapter != new.adapter
-        || old.token != new.token
-        || old.config != new.config
+    old.adapter != new.adapter || old.token != new.token || old.config != new.config
 }

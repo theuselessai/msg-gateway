@@ -22,17 +22,18 @@ use crate::manager::CredentialManager;
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| "msg_gateway=debug,tower_http=debug".into()))
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "msg_gateway=debug,tower_http=debug".into()),
+        )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
     tracing::info!("Starting msg-gateway");
 
     // Load config
-    let config_path = std::env::var("GATEWAY_CONFIG")
-        .unwrap_or_else(|_| "config.json".to_string());
-    
+    let config_path = std::env::var("GATEWAY_CONFIG").unwrap_or_else(|_| "config.json".to_string());
+
     let config = config::load_config(&config_path)?;
     tracing::info!(listen = %config.gateway.listen, "Configuration loaded");
 
@@ -54,17 +55,21 @@ async fn main() -> anyhow::Result<()> {
     // Start HTTP server (before spawning adapters, so they can connect)
     let manager_clone = manager.clone();
     let adapter_manager_clone = adapter_manager.clone();
-    let (state, server_future) = server::create_server(config.clone(), manager_clone, adapter_manager_clone).await?;
+    let (state, server_future) =
+        server::create_server(config.clone(), manager_clone, adapter_manager_clone).await?;
 
     // Start adapter instances for all active credentials
     for (credential_id, cred_config) in &config.credentials {
         if cred_config.active {
-            match adapter_manager.spawn(
-                credential_id,
-                &cred_config.adapter,
-                &cred_config.token,
-                cred_config.config.as_ref(),
-            ).await {
+            match adapter_manager
+                .spawn(
+                    credential_id,
+                    &cred_config.adapter,
+                    &cred_config.token,
+                    cred_config.config.as_ref(),
+                )
+                .await
+            {
                 Ok((instance_id, port)) => {
                     tracing::info!(
                         credential_id = %credential_id,
@@ -81,8 +86,9 @@ async fn main() -> anyhow::Result<()> {
                             credential_id,
                             Duration::from_secs(30),
                             Duration::from_millis(500),
-                        ).await;
-                        
+                        )
+                        .await;
+
                         if ready {
                             tracing::info!(
                                 credential_id = %credential_id,
@@ -99,7 +105,9 @@ async fn main() -> anyhow::Result<()> {
                     }
 
                     // Register in credential manager
-                    manager.spawn_task(credential_id.clone(), cred_config.clone()).await;
+                    manager
+                        .spawn_task(credential_id.clone(), cred_config.clone())
+                        .await;
                 }
                 Err(e) => {
                     tracing::error!(
@@ -121,7 +129,8 @@ async fn main() -> anyhow::Result<()> {
                 adapter_manager_for_health,
                 30, // interval_secs
                 3,  // max_failures
-            ).await;
+            )
+            .await;
         });
     }
 
@@ -136,7 +145,9 @@ async fn main() -> anyhow::Result<()> {
             watcher_state,
             watcher_manager,
             watcher_adapter_manager,
-        ).await {
+        )
+        .await
+        {
             tracing::error!(error = %e, "Config watcher failed");
         }
     });

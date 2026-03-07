@@ -38,9 +38,9 @@ impl FileCache {
     /// Create a new file cache
     pub async fn new(config: FileCacheConfig, gateway_url: &str) -> Result<Self, AppError> {
         // Ensure cache directory exists
-        fs::create_dir_all(&config.directory).await.map_err(|e| {
-            AppError::Internal(format!("Failed to create cache directory: {}", e))
-        })?;
+        fs::create_dir_all(&config.directory)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to create cache directory: {}", e)))?;
 
         let cache = Self {
             config,
@@ -57,39 +57,40 @@ impl FileCache {
     /// Scan cache directory and rebuild index
     async fn scan_directory(&self) -> Result<(), AppError> {
         let dir = Path::new(&self.config.directory);
-        
-        let mut entries = fs::read_dir(dir).await.map_err(|e| {
-            AppError::Internal(format!("Failed to read cache directory: {}", e))
-        })?;
+
+        let mut entries = fs::read_dir(dir)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to read cache directory: {}", e)))?;
 
         let mut files = self.files.write().await;
-        
-        while let Some(entry) = entries.next_entry().await.map_err(|e| {
-            AppError::Internal(format!("Failed to read directory entry: {}", e))
-        })? {
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to read directory entry: {}", e)))?
+        {
             let path = entry.path();
-            
+
             // Look for .meta files
-            if path.extension().map(|e| e == "meta").unwrap_or(false) {
-                if let Ok(content) = fs::read_to_string(&path).await {
-                    if let Ok(cached) = serde_json::from_str::<CachedFile>(&content) {
-                        files.insert(cached.file_id.clone(), cached);
-                    }
-                }
+            if path.extension().map(|e| e == "meta").unwrap_or(false)
+                && let Ok(content) = fs::read_to_string(&path).await
+                && let Ok(cached) = serde_json::from_str::<CachedFile>(&content)
+            {
+                files.insert(cached.file_id.clone(), cached);
             }
         }
 
-        tracing::info!(
-            cached_files = files.len(),
-            "File cache index loaded"
-        );
+        tracing::info!(cached_files = files.len(), "File cache index loaded");
 
         Ok(())
     }
 
     /// Generate a unique file ID
     fn generate_file_id() -> String {
-        format!("f_{}", uuid::Uuid::new_v4().to_string().replace("-", "")[..12].to_string())
+        format!(
+            "f_{}",
+            &uuid::Uuid::new_v4().to_string().replace("-", "")[..12]
+        )
     }
 
     /// Validate MIME type against config
@@ -106,9 +107,11 @@ impl FileCache {
 
         // If allowed list is non-empty, check against it
         if !self.config.allowed_mime_types.is_empty() {
-            let allowed = self.config.allowed_mime_types.iter().any(|pattern| {
-                mime_matches(mime_type, pattern)
-            });
+            let allowed = self
+                .config
+                .allowed_mime_types
+                .iter()
+                .any(|pattern| mime_matches(mime_type, pattern));
             if !allowed {
                 return Err(AppError::Internal(format!(
                     "MIME type {} is not in allowed list",
@@ -137,14 +140,15 @@ impl FileCache {
         // Download file
         let client = reqwest::Client::new();
         let mut request = client.get(url);
-        
+
         if let Some(auth) = auth_header {
             request = request.header("Authorization", auth);
         }
 
-        let response = request.send().await.map_err(|e| {
-            AppError::Internal(format!("Failed to download file: {}", e))
-        })?;
+        let response = request
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to download file: {}", e)))?;
 
         if !response.status().is_success() {
             return Err(AppError::Internal(format!(
@@ -154,19 +158,19 @@ impl FileCache {
         }
 
         // Check content length if available
-        if let Some(content_length) = response.content_length() {
-            if content_length > max_size {
-                return Err(AppError::Internal(format!(
-                    "File too large: {} bytes (max {} MB)",
-                    content_length,
-                    self.config.max_file_size_mb
-                )));
-            }
+        if let Some(content_length) = response.content_length()
+            && content_length > max_size
+        {
+            return Err(AppError::Internal(format!(
+                "File too large: {} bytes (max {} MB)",
+                content_length, self.config.max_file_size_mb
+            )));
         }
 
-        let bytes = response.bytes().await.map_err(|e| {
-            AppError::Internal(format!("Failed to read file content: {}", e))
-        })?;
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to read file content: {}", e)))?;
 
         if bytes.len() as u64 > max_size {
             return Err(AppError::Internal(format!(
@@ -183,16 +187,15 @@ impl FileCache {
             .unwrap_or("bin");
 
         // Save file
-        let file_path = PathBuf::from(&self.config.directory)
-            .join(format!("{}.{}", file_id, ext));
-        
-        let mut file = fs::File::create(&file_path).await.map_err(|e| {
-            AppError::Internal(format!("Failed to create cache file: {}", e))
-        })?;
-        
-        file.write_all(&bytes).await.map_err(|e| {
-            AppError::Internal(format!("Failed to write cache file: {}", e))
-        })?;
+        let file_path = PathBuf::from(&self.config.directory).join(format!("{}.{}", file_id, ext));
+
+        let mut file = fs::File::create(&file_path)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to create cache file: {}", e)))?;
+
+        file.write_all(&bytes)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to write cache file: {}", e)))?;
 
         // Create metadata
         let now = SystemTime::now()
@@ -210,12 +213,11 @@ impl FileCache {
         };
 
         // Save metadata
-        let meta_path = PathBuf::from(&self.config.directory)
-            .join(format!("{}.meta", file_id));
+        let meta_path = PathBuf::from(&self.config.directory).join(format!("{}.meta", file_id));
         let meta_json = serde_json::to_string_pretty(&cached).unwrap();
-        fs::write(&meta_path, meta_json).await.map_err(|e| {
-            AppError::Internal(format!("Failed to write metadata: {}", e))
-        })?;
+        fs::write(&meta_path, meta_json)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to write metadata: {}", e)))?;
 
         // Add to index
         {
@@ -234,6 +236,7 @@ impl FileCache {
     }
 
     /// Store file data directly (for outbound files from backend)
+    #[allow(dead_code)]
     pub async fn store_file(
         &self,
         data: Vec<u8>,
@@ -260,12 +263,11 @@ impl FileCache {
             .unwrap_or("bin");
 
         // Save file
-        let file_path = PathBuf::from(&self.config.directory)
-            .join(format!("{}.{}", file_id, ext));
-        
-        fs::write(&file_path, &data).await.map_err(|e| {
-            AppError::Internal(format!("Failed to write file: {}", e))
-        })?;
+        let file_path = PathBuf::from(&self.config.directory).join(format!("{}.{}", file_id, ext));
+
+        fs::write(&file_path, &data)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to write file: {}", e)))?;
 
         // Create metadata
         let now = SystemTime::now()
@@ -283,12 +285,11 @@ impl FileCache {
         };
 
         // Save metadata
-        let meta_path = PathBuf::from(&self.config.directory)
-            .join(format!("{}.meta", file_id));
+        let meta_path = PathBuf::from(&self.config.directory).join(format!("{}.meta", file_id));
         let meta_json = serde_json::to_string_pretty(&cached).unwrap();
-        fs::write(&meta_path, meta_json).await.map_err(|e| {
-            AppError::Internal(format!("Failed to write metadata: {}", e))
-        })?;
+        fs::write(&meta_path, meta_json)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to write metadata: {}", e)))?;
 
         // Add to index
         {
@@ -314,24 +315,25 @@ impl FileCache {
 
     /// Read file content
     pub async fn read_file(&self, file_id: &str) -> Result<Vec<u8>, AppError> {
-        let cached = self.get(file_id).await.ok_or_else(|| {
-            AppError::NotFound(format!("File not found: {}", file_id))
-        })?;
+        let cached = self
+            .get(file_id)
+            .await
+            .ok_or_else(|| AppError::NotFound(format!("File not found: {}", file_id)))?;
 
         // Check if file is expired
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let ttl_secs = (self.config.ttl_hours as u64) * 3600;
         if now - cached.created_at > ttl_secs {
             return Err(AppError::Gone(format!("File expired: {}", file_id)));
         }
 
-        fs::read(&cached.path).await.map_err(|e| {
-            AppError::Internal(format!("Failed to read file: {}", e))
-        })
+        fs::read(&cached.path)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to read file: {}", e)))
     }
 
     /// Get download URL for a cached file
@@ -340,12 +342,14 @@ impl FileCache {
     }
 
     /// Get file path (for passing to adapters)
+    #[allow(dead_code)]
     pub async fn get_file_path(&self, file_id: &str) -> Option<PathBuf> {
         let files = self.files.read().await;
         files.get(file_id).map(|f| f.path.clone())
     }
 
     /// Delete a cached file
+    #[allow(dead_code)]
     pub async fn delete(&self, file_id: &str) -> Result<(), AppError> {
         let cached = {
             let mut files = self.files.write().await;
@@ -355,8 +359,7 @@ impl FileCache {
         if let Some(cached) = cached {
             // Delete file and metadata
             let _ = fs::remove_file(&cached.path).await;
-            let meta_path = PathBuf::from(&self.config.directory)
-                .join(format!("{}.meta", file_id));
+            let meta_path = PathBuf::from(&self.config.directory).join(format!("{}.meta", file_id));
             let _ = fs::remove_file(&meta_path).await;
 
             tracing::debug!(file_id = %file_id, "File deleted");
@@ -366,12 +369,13 @@ impl FileCache {
     }
 
     /// Run cleanup to remove expired files
+    #[allow(dead_code)]
     pub async fn cleanup(&self) -> Result<usize, AppError> {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let ttl_secs = (self.config.ttl_hours as u64) * 3600;
         let mut removed = 0;
 
@@ -398,10 +402,11 @@ impl FileCache {
     }
 
     /// Get cache statistics
+    #[allow(dead_code)]
     pub async fn stats(&self) -> FileCacheStats {
         let files = self.files.read().await;
         let total_bytes: u64 = files.values().map(|f| f.size_bytes).sum();
-        
+
         FileCacheStats {
             file_count: files.len(),
             total_bytes,
@@ -411,6 +416,7 @@ impl FileCache {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)]
 pub struct FileCacheStats {
     pub file_count: usize,
     pub total_bytes: u64,
@@ -422,19 +428,19 @@ fn mime_matches(mime_type: &str, pattern: &str) -> bool {
     if pattern == "*" || pattern == "*/*" {
         return true;
     }
-    
-    if pattern.ends_with("/*") {
-        let prefix = &pattern[..pattern.len() - 2];
+
+    if let Some(prefix) = pattern.strip_suffix("/*") {
         return mime_type.starts_with(prefix);
     }
-    
+
     mime_type == pattern
 }
 
 /// Start background cleanup task
+#[allow(dead_code)]
 pub async fn start_cleanup_task(cache: Arc<FileCache>, interval_minutes: u32) {
     let interval = Duration::from_secs((interval_minutes as u64) * 60);
-    
+
     tracing::info!(
         interval_minutes = interval_minutes,
         "Starting file cache cleanup task"
@@ -442,7 +448,7 @@ pub async fn start_cleanup_task(cache: Arc<FileCache>, interval_minutes: u32) {
 
     loop {
         tokio::time::sleep(interval).await;
-        
+
         if let Err(e) = cache.cleanup().await {
             tracing::error!(error = %e, "File cache cleanup failed");
         }

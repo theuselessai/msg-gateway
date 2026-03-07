@@ -1,17 +1,17 @@
 use axum::{
+    Json,
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         Path, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::header,
     response::IntoResponse,
-    Json,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 use crate::error::AppError;
 use crate::message::{InboundMessage, MessageSource, UserInfo, WsOutboundMessage};
@@ -94,13 +94,16 @@ pub async fn chat_inbound(
     }
 
     let route = credential.route.clone();
-    
+
     // Resolve target for this credential
     let target = crate::backend::resolve_target(credential, &config.gateway.default_target);
     let adapter = match crate::backend::create_adapter(target) {
         Ok(a) => a,
         Err(e) => {
-            return Err(AppError::Internal(format!("Failed to create backend adapter: {}", e)));
+            return Err(AppError::Internal(format!(
+                "Failed to create backend adapter: {}",
+                e
+            )));
         }
     };
     drop(config);
@@ -226,7 +229,12 @@ pub async fn ws_handler(
     Ok(ws.on_upgrade(move |socket| handle_ws(socket, ws_registry, cred_id, c_id)))
 }
 
-async fn handle_ws(socket: WebSocket, registry: WsRegistry, credential_id: String, chat_id: String) {
+async fn handle_ws(
+    socket: WebSocket,
+    registry: WsRegistry,
+    credential_id: String,
+    chat_id: String,
+) {
     let (sender, mut receiver) = socket.split();
     let sender = Arc::new(tokio::sync::Mutex::new(sender));
 
@@ -234,14 +242,12 @@ async fn handle_ws(socket: WebSocket, registry: WsRegistry, credential_id: Strin
     let mut rx = {
         let mut reg = registry.write().await;
         let key = (credential_id.clone(), chat_id.clone());
-        
-        let tx = reg
-            .entry(key)
-            .or_insert_with(|| {
-                let (tx, _) = broadcast::channel(100);
-                tx
-            });
-        
+
+        let tx = reg.entry(key).or_insert_with(|| {
+            let (tx, _) = broadcast::channel(100);
+            tx
+        });
+
         tx.subscribe()
     };
 
@@ -281,15 +287,15 @@ async fn handle_ws(socket: WebSocket, registry: WsRegistry, credential_id: Strin
 
     // Cleanup
     send_task.abort();
-    
+
     // Remove from registry if no more subscribers
     {
         let mut reg = registry.write().await;
         let key = (credential_id.clone(), chat_id.clone());
-        if let Some(tx) = reg.get(&key) {
-            if tx.receiver_count() == 0 {
-                reg.remove(&key);
-            }
+        if let Some(tx) = reg.get(&key)
+            && tx.receiver_count() == 0
+        {
+            reg.remove(&key);
         }
     }
 
@@ -309,7 +315,7 @@ pub async fn send_to_ws(
 ) -> bool {
     let reg = registry.read().await;
     let key = (credential_id.to_string(), chat_id.to_string());
-    
+
     if let Some(tx) = reg.get(&key) {
         match tx.send(message) {
             Ok(_) => {

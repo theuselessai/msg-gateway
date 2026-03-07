@@ -146,7 +146,10 @@ mod tests {
 
     #[test]
     fn test_resolve_env_vars() {
-        std::env::set_var("TEST_VAR", "test_value");
+        // SAFETY: This is a single-threaded test
+        unsafe {
+            std::env::set_var("TEST_VAR", "test_value");
+        }
         let input = r#"{"token": "${TEST_VAR}"}"#;
         let result = resolve_env_vars(input).unwrap();
         assert_eq!(result, r#"{"token": "test_value"}"#);

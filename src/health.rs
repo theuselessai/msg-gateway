@@ -69,7 +69,7 @@ impl HealthMonitor {
     /// Record a successful health check
     pub async fn record_success(&self) -> Option<HealthState> {
         let old_state = *self.state.read().await;
-        
+
         *self.failure_count.write().await = 0;
         *self.last_healthy.write().await = Some(Instant::now());
 
@@ -95,7 +95,7 @@ impl HealthMonitor {
     /// Record a failed health check
     pub async fn record_failure(&self, alert_threshold: u32) -> Option<HealthState> {
         let old_state = *self.state.read().await;
-        
+
         let mut count = self.failure_count.write().await;
         *count += 1;
         let failure_count = *count;
@@ -124,13 +124,13 @@ impl HealthMonitor {
     /// Buffer a message during outage
     pub async fn buffer_message(&self, message: InboundMessage) -> bool {
         let mut buffer = self.buffer.write().await;
-        
+
         if buffer.len() >= self.max_buffer_size {
             // Drop oldest message
             buffer.pop_front();
             tracing::warn!("Message buffer full, dropping oldest message");
         }
-        
+
         buffer.push_back(message);
         tracing::debug!(buffer_size = buffer.len(), "Message buffered");
         true
@@ -183,7 +183,7 @@ pub async fn start_health_check(
         match result {
             Ok(resp) if resp.status().is_success() => {
                 let state_change = state.health_monitor.record_success().await;
-                
+
                 if let Some(new_state) = state_change {
                     match new_state {
                         HealthState::Recovering => {
@@ -209,7 +209,7 @@ pub async fn start_health_check(
                     status = %resp.status(),
                     "Health check failed (non-2xx)"
                 );
-                
+
                 let state_change = state
                     .health_monitor
                     .record_failure(config.alert_after_failures)
@@ -225,7 +225,7 @@ pub async fn start_health_check(
                     error = %e,
                     "Health check failed (network error)"
                 );
-                
+
                 let state_change = state
                     .health_monitor
                     .record_failure(config.alert_after_failures)
@@ -242,7 +242,7 @@ pub async fn start_health_check(
 /// Send emergency alert to all emergency credentials
 async fn send_emergency_alert(state: &AppState, config: &HealthCheckConfig) {
     let app_config = state.config.read().await;
-    
+
     let last_healthy = state
         .health_monitor
         .last_healthy_ago()
@@ -258,30 +258,31 @@ async fn send_emergency_alert(state: &AppState, config: &HealthCheckConfig) {
     );
 
     for cred_id in &config.notify_credentials {
-        if let Some(cred) = app_config.credentials.get(cred_id) {
-            if cred.active && cred.emergency {
+        if let Some(cred) = app_config.credentials.get(cred_id)
+            && cred.active
+            && cred.emergency
+        {
+            tracing::info!(
+                credential_id = %cred_id,
+                "Sending emergency alert"
+            );
+
+            // For generic adapter, we can't really send an alert
+            // since it requires a client to be connected.
+            // For external adapters, we would POST to them.
+            if cred.adapter == "generic" {
+                tracing::warn!(
+                    credential_id = %cred_id,
+                    "Cannot send emergency alert via generic adapter (no persistent connection)"
+                );
+            } else {
+                // TODO: POST to external adapter's /send endpoint
                 tracing::info!(
                     credential_id = %cred_id,
-                    "Sending emergency alert"
+                    adapter = %cred.adapter,
+                    message = %message,
+                    "Emergency alert (would be sent via adapter)"
                 );
-                
-                // For generic adapter, we can't really send an alert
-                // since it requires a client to be connected.
-                // For external adapters, we would POST to them.
-                if cred.adapter == "generic" {
-                    tracing::warn!(
-                        credential_id = %cred_id,
-                        "Cannot send emergency alert via generic adapter (no persistent connection)"
-                    );
-                } else {
-                    // TODO: POST to external adapter's /send endpoint
-                    tracing::info!(
-                        credential_id = %cred_id,
-                        adapter = %cred.adapter,
-                        message = %message,
-                        "Emergency alert (would be sent via adapter)"
-                    );
-                }
             }
         }
     }
@@ -294,27 +295,28 @@ async fn send_recovery_notification(state: &AppState, config: &HealthCheckConfig
     let message = "✅ Target server has recovered. All systems operational.";
 
     for cred_id in &config.notify_credentials {
-        if let Some(cred) = app_config.credentials.get(cred_id) {
-            if cred.active && cred.emergency {
+        if let Some(cred) = app_config.credentials.get(cred_id)
+            && cred.active
+            && cred.emergency
+        {
+            tracing::info!(
+                credential_id = %cred_id,
+                "Sending recovery notification"
+            );
+
+            if cred.adapter == "generic" {
+                tracing::warn!(
+                    credential_id = %cred_id,
+                    "Cannot send recovery notification via generic adapter"
+                );
+            } else {
+                // TODO: POST to external adapter's /send endpoint
                 tracing::info!(
                     credential_id = %cred_id,
-                    "Sending recovery notification"
+                    adapter = %cred.adapter,
+                    message = %message,
+                    "Recovery notification (would be sent via adapter)"
                 );
-                
-                if cred.adapter == "generic" {
-                    tracing::warn!(
-                        credential_id = %cred_id,
-                        "Cannot send recovery notification via generic adapter"
-                    );
-                } else {
-                    // TODO: POST to external adapter's /send endpoint
-                    tracing::info!(
-                        credential_id = %cred_id,
-                        adapter = %cred.adapter,
-                        message = %message,
-                        "Recovery notification (would be sent via adapter)"
-                    );
-                }
             }
         }
     }
@@ -323,10 +325,10 @@ async fn send_recovery_notification(state: &AppState, config: &HealthCheckConfig
 /// Drain buffered messages to the target server
 async fn drain_buffered_messages(state: &AppState, messages: Vec<InboundMessage>) {
     use crate::backend::{create_adapter, resolve_target};
-    
+
     for message in messages {
         let config = state.config.read().await;
-        
+
         // Resolve target for this message's credential
         let adapter = if let Some(credential) = config.credentials.get(&message.credential_id) {
             let target = resolve_target(credential, &config.gateway.default_target);
@@ -373,5 +375,127 @@ async fn drain_buffered_messages(state: &AppState, messages: Vec<InboundMessage>
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_health_state_display() {
+        assert_eq!(format!("{}", HealthState::Healthy), "healthy");
+        assert_eq!(format!("{}", HealthState::Degraded), "degraded");
+        assert_eq!(format!("{}", HealthState::Down), "down");
+        assert_eq!(format!("{}", HealthState::Recovering), "recovering");
+    }
+
+    #[tokio::test]
+    async fn test_health_monitor_new() {
+        let monitor = HealthMonitor::new(100);
+        assert_eq!(monitor.get_state().await, HealthState::Healthy);
+        assert_eq!(monitor.buffer_size().await, 0);
+        assert_eq!(monitor.max_buffer_size, 100);
+    }
+
+    #[tokio::test]
+    async fn test_health_monitor_record_success() {
+        let monitor = HealthMonitor::new(100);
+
+        // Initial state is healthy
+        assert_eq!(monitor.get_state().await, HealthState::Healthy);
+
+        // Recording success should keep it healthy
+        let state_change = monitor.record_success().await;
+        assert!(state_change.is_none()); // No state change
+        assert_eq!(monitor.get_state().await, HealthState::Healthy);
+    }
+
+    #[tokio::test]
+    async fn test_health_monitor_record_failure() {
+        let monitor = HealthMonitor::new(100);
+        let alert_threshold = 3;
+
+        // First failure - Healthy -> Degraded
+        let change1 = monitor.record_failure(alert_threshold).await;
+        assert_eq!(change1, Some(HealthState::Degraded));
+        assert_eq!(monitor.get_state().await, HealthState::Degraded);
+
+        // Second failure - stays Degraded (no state change)
+        let change2 = monitor.record_failure(alert_threshold).await;
+        assert!(change2.is_none());
+        assert_eq!(monitor.get_state().await, HealthState::Degraded);
+
+        // Third failure - Degraded -> Down (threshold reached)
+        let change3 = monitor.record_failure(alert_threshold).await;
+        assert_eq!(change3, Some(HealthState::Down));
+        assert_eq!(monitor.get_state().await, HealthState::Down);
+    }
+
+    #[tokio::test]
+    async fn test_health_monitor_recovery() {
+        let monitor = HealthMonitor::new(100);
+        let alert_threshold = 1;
+
+        // Go to Down state
+        monitor.record_failure(alert_threshold).await;
+        assert_eq!(monitor.get_state().await, HealthState::Down);
+
+        // First success - should go to Recovering
+        let change1 = monitor.record_success().await;
+        assert_eq!(change1, Some(HealthState::Recovering));
+        assert_eq!(monitor.get_state().await, HealthState::Recovering);
+
+        // Second success - should go to Healthy
+        let change2 = monitor.record_success().await;
+        assert_eq!(change2, Some(HealthState::Healthy));
+        assert_eq!(monitor.get_state().await, HealthState::Healthy);
+    }
+
+    #[tokio::test]
+    async fn test_health_monitor_buffer() {
+        use crate::message::{InboundMessage, MessageSource, UserInfo};
+        use chrono::Utc;
+
+        let monitor = HealthMonitor::new(2); // Small buffer for testing
+
+        let make_message = |id: &str| InboundMessage {
+            route: serde_json::json!("test"),
+            credential_id: "cred1".to_string(),
+            source: MessageSource {
+                protocol: "test".to_string(),
+                chat_id: "chat1".to_string(),
+                message_id: id.to_string(),
+                from: UserInfo {
+                    id: "user1".to_string(),
+                    username: None,
+                    display_name: None,
+                },
+            },
+            text: "test message".to_string(),
+            attachments: vec![],
+            timestamp: Utc::now(),
+        };
+
+        // Buffer first message
+        assert!(monitor.buffer_message(make_message("msg1")).await);
+        assert_eq!(monitor.buffer_size().await, 1);
+
+        // Buffer second message
+        assert!(monitor.buffer_message(make_message("msg2")).await);
+        assert_eq!(monitor.buffer_size().await, 2);
+
+        // Buffer third message - should drop oldest
+        assert!(monitor.buffer_message(make_message("msg3")).await);
+        assert_eq!(monitor.buffer_size().await, 2);
+
+        // Drain buffer
+        let messages = monitor.drain_buffer().await;
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].source.message_id, "msg2"); // First was dropped
+        assert_eq!(messages[1].source.message_id, "msg3");
+
+        // Buffer should be empty now
+        assert_eq!(monitor.buffer_size().await, 0);
     }
 }
