@@ -938,7 +938,11 @@ mod tests {
 
         // Store a file without extension
         let cached = cache
-            .store_file(b"binary data".to_vec(), "noextension", "application/octet-stream")
+            .store_file(
+                b"binary data".to_vec(),
+                "noextension",
+                "application/octet-stream",
+            )
             .await
             .unwrap();
 
