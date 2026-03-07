@@ -93,7 +93,7 @@ impl TestServer {
             .gateway
             .listen
             .split(':')
-            .last()
+            .next_back()
             .unwrap()
             .parse()
             .unwrap();
