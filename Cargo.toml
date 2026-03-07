@@ -47,3 +47,5 @@ async-trait = "0.1"
 
 [dev-dependencies]
 http = "1"
+serial_test = "3.4.0"
+tempfile = "3.26.0"

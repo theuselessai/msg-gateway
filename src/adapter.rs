@@ -871,6 +871,10 @@ pub struct AdapterSendResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    // ==================== PortAllocator Tests ====================
 
     #[tokio::test]
     async fn test_port_allocator_basic() {
@@ -910,6 +914,36 @@ mod tests {
         assert_eq!(port3, Some(9000));
     }
 
+    #[tokio::test]
+    async fn test_port_allocator_release_unallocated() {
+        let allocator = PortAllocator::new((9000, 9001));
+
+        // Release a port that was never allocated - should not panic
+        allocator.release(9000).await;
+
+        // Should still be able to allocate normally
+        let port = allocator.allocate().await;
+        assert_eq!(port, Some(9000));
+    }
+
+    #[tokio::test]
+    async fn test_port_allocator_single_port_range() {
+        let allocator = PortAllocator::new((9000, 9000));
+
+        let port1 = allocator.allocate().await;
+        assert_eq!(port1, Some(9000));
+
+        let port2 = allocator.allocate().await;
+        assert_eq!(port2, None);
+
+        allocator.release(9000).await;
+
+        let port3 = allocator.allocate().await;
+        assert_eq!(port3, Some(9000));
+    }
+
+    // ==================== AdapterDef Tests ====================
+
     #[test]
     fn test_adapter_def_parse() {
         let json = r#"{
@@ -940,6 +974,527 @@ mod tests {
     }
 
     #[test]
+    fn test_adapter_def_serialize() {
+        let def = AdapterDef {
+            name: "test".to_string(),
+            version: "1.0.0".to_string(),
+            command: "python3".to_string(),
+            args: vec!["main.py".to_string()],
+        };
+
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(json.contains("\"name\":\"test\""));
+        assert!(json.contains("\"version\":\"1.0.0\""));
+    }
+
+    // ==================== load_adapter_def Tests ====================
+
+    #[test]
+    fn test_load_adapter_def_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let adapter_dir = temp_dir.path().join("test_adapter");
+        fs::create_dir(&adapter_dir).unwrap();
+
+        let adapter_json = adapter_dir.join("adapter.json");
+        fs::write(
+            &adapter_json,
+            r#"{
+            "name": "test_adapter",
+            "version": "1.0.0",
+            "command": "python3",
+            "args": ["main.py"]
+        }"#,
+        )
+        .unwrap();
+
+        let def = load_adapter_def(&adapter_dir).unwrap();
+        assert_eq!(def.name, "test_adapter");
+        assert_eq!(def.version, "1.0.0");
+    }
+
+    #[test]
+    fn test_load_adapter_def_file_not_found() {
+        let temp_dir = TempDir::new().unwrap();
+        let adapter_dir = temp_dir.path().join("nonexistent");
+        fs::create_dir(&adapter_dir).unwrap();
+
+        let result = load_adapter_def(&adapter_dir);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, AppError::Config(_)));
+    }
+
+    #[test]
+    fn test_load_adapter_def_invalid_json() {
+        let temp_dir = TempDir::new().unwrap();
+        let adapter_dir = temp_dir.path().join("invalid_adapter");
+        fs::create_dir(&adapter_dir).unwrap();
+
+        let adapter_json = adapter_dir.join("adapter.json");
+        fs::write(&adapter_json, "{ invalid json }").unwrap();
+
+        let result = load_adapter_def(&adapter_dir);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, AppError::Config(_)));
+    }
+
+    // ==================== discover_adapters Tests ====================
+
+    #[test]
+    fn test_discover_adapters_empty_dir() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let adapters = discover_adapters(temp_dir.path()).unwrap();
+        assert!(adapters.is_empty());
+    }
+
+    #[test]
+    fn test_discover_adapters_nonexistent_dir() {
+        let result = discover_adapters(Path::new("/nonexistent/dir"));
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_discover_adapters_with_adapters() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create adapter 1
+        let adapter1_dir = temp_dir.path().join("adapter1");
+        fs::create_dir(&adapter1_dir).unwrap();
+        fs::write(
+            adapter1_dir.join("adapter.json"),
+            r#"{
+            "name": "adapter1",
+            "version": "1.0.0",
+            "command": "python3"
+        }"#,
+        )
+        .unwrap();
+
+        // Create adapter 2
+        let adapter2_dir = temp_dir.path().join("adapter2");
+        fs::create_dir(&adapter2_dir).unwrap();
+        fs::write(
+            adapter2_dir.join("adapter.json"),
+            r#"{
+            "name": "adapter2",
+            "version": "2.0.0",
+            "command": "node"
+        }"#,
+        )
+        .unwrap();
+
+        let adapters = discover_adapters(temp_dir.path()).unwrap();
+        assert_eq!(adapters.len(), 2);
+        assert!(adapters.contains_key("adapter1"));
+        assert!(adapters.contains_key("adapter2"));
+    }
+
+    #[test]
+    fn test_discover_adapters_skips_files() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a file (not a directory)
+        fs::write(temp_dir.path().join("not_a_dir.txt"), "content").unwrap();
+
+        let adapters = discover_adapters(temp_dir.path()).unwrap();
+        assert!(adapters.is_empty());
+    }
+
+    #[test]
+    fn test_discover_adapters_skips_invalid() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create valid adapter
+        let valid_dir = temp_dir.path().join("valid");
+        fs::create_dir(&valid_dir).unwrap();
+        fs::write(
+            valid_dir.join("adapter.json"),
+            r#"{
+            "name": "valid",
+            "version": "1.0.0",
+            "command": "python3"
+        }"#,
+        )
+        .unwrap();
+
+        // Create invalid adapter (bad JSON)
+        let invalid_dir = temp_dir.path().join("invalid");
+        fs::create_dir(&invalid_dir).unwrap();
+        fs::write(invalid_dir.join("adapter.json"), "{ bad json }").unwrap();
+
+        // Create dir without adapter.json
+        let no_json_dir = temp_dir.path().join("no_json");
+        fs::create_dir(&no_json_dir).unwrap();
+
+        let adapters = discover_adapters(temp_dir.path()).unwrap();
+        // Only valid adapter should be discovered
+        assert_eq!(adapters.len(), 1);
+        assert!(adapters.contains_key("valid"));
+    }
+
+    // ==================== AdapterInstanceManager Tests ====================
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_new() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        assert_eq!(
+            manager.adapters_dir,
+            temp_dir.path().to_string_lossy().to_string()
+        );
+        assert!(manager.adapters.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_new_with_adapters() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create an adapter
+        let adapter_dir = temp_dir.path().join("test_adapter");
+        fs::create_dir(&adapter_dir).unwrap();
+        fs::write(
+            adapter_dir.join("adapter.json"),
+            r#"{
+            "name": "test_adapter",
+            "version": "1.0.0",
+            "command": "echo"
+        }"#,
+        )
+        .unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        assert_eq!(manager.adapters.len(), 1);
+        assert!(manager.adapters.contains_key("test_adapter"));
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_gateway_url_conversion() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Test with 0.0.0.0 address
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "0.0.0.0:8080",
+        )
+        .unwrap();
+
+        assert_eq!(manager.gateway_url, "http://127.0.0.1:8080");
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_has_adapter() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let adapter_dir = temp_dir.path().join("telegram");
+        fs::create_dir(&adapter_dir).unwrap();
+        fs::write(
+            adapter_dir.join("adapter.json"),
+            r#"{
+            "name": "telegram",
+            "version": "1.0.0",
+            "command": "python3"
+        }"#,
+        )
+        .unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        // Generic is always available
+        assert!(manager.has_adapter("generic"));
+        // Discovered adapter
+        assert!(manager.has_adapter("telegram"));
+        // Non-existent adapter
+        assert!(!manager.has_adapter("nonexistent"));
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_spawn_generic() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        let result = manager.spawn("cred1", "generic", "token123", None).await;
+        assert!(result.is_ok());
+
+        let (instance_id, port) = result.unwrap();
+        assert!(instance_id.starts_with("generic_"));
+        assert_eq!(port, 0); // Generic adapter uses port 0
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_spawn_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        let result = manager
+            .spawn("cred1", "nonexistent", "token123", None)
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, AppError::Config(_)));
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_stop_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        // Should return Ok even for nonexistent credential
+        let result = manager.stop("nonexistent").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_get_port() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        // Non-existent credential
+        assert_eq!(manager.get_port("nonexistent").await, None);
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_get_instance_id() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        // Non-existent credential
+        assert_eq!(manager.get_instance_id("nonexistent").await, None);
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_is_running() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        // Non-existent credential
+        assert!(!manager.is_running("nonexistent").await);
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_get_credential_id() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        // Non-existent instance
+        assert_eq!(
+            manager.get_credential_id("nonexistent_instance").await,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_get_all_health_empty() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        let health = manager.get_all_health().await;
+        assert!(health.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_check_health_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        // Non-existent credential should return Dead
+        let health = manager.check_health("nonexistent").await;
+        assert_eq!(health, AdapterHealth::Dead);
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_get_health_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        let health = manager.get_health("nonexistent").await;
+        assert!(health.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_check_process_alive_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        // Non-existent credential should return false
+        assert!(!manager.check_process_alive("nonexistent").await);
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_stop_all_empty() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        // Should not panic with no processes
+        manager.stop_all().await;
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_restart_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        let result = manager.restart("nonexistent", 5).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_reset_restart_count_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        // Should not panic
+        manager.reset_restart_count("nonexistent").await;
+    }
+
+    #[tokio::test]
+    async fn test_adapter_instance_manager_get_restart_info_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = AdapterInstanceManager::new(
+            temp_dir.path().to_string_lossy().to_string(),
+            (9000, 9100),
+            "127.0.0.1:8080",
+        )
+        .unwrap();
+
+        let info = manager.get_restart_info("nonexistent").await;
+        assert!(info.is_none());
+    }
+
+    // ==================== AdapterHealth Tests ====================
+
+    #[test]
+    fn test_adapter_health_eq() {
+        assert_eq!(AdapterHealth::Starting, AdapterHealth::Starting);
+        assert_eq!(AdapterHealth::Healthy, AdapterHealth::Healthy);
+        assert_eq!(AdapterHealth::Unhealthy, AdapterHealth::Unhealthy);
+        assert_eq!(AdapterHealth::Dead, AdapterHealth::Dead);
+        assert_ne!(AdapterHealth::Healthy, AdapterHealth::Unhealthy);
+    }
+
+    #[test]
+    fn test_adapter_health_clone() {
+        let health = AdapterHealth::Healthy;
+        let cloned = health;
+        assert_eq!(health, cloned);
+    }
+
+    #[test]
+    fn test_adapter_health_debug() {
+        let health = AdapterHealth::Healthy;
+        let debug_str = format!("{:?}", health);
+        assert!(debug_str.contains("Healthy"));
+    }
+
+    // ==================== HealthMonitorConfig Tests ====================
+
+    #[test]
     fn test_health_monitor_config_default() {
         let config = HealthMonitorConfig::default();
         assert_eq!(config.interval_secs, 30);
@@ -947,6 +1502,20 @@ mod tests {
         assert_eq!(config.max_restarts, 5);
         assert_eq!(config.healthy_reset_secs, 300);
     }
+
+    #[test]
+    fn test_health_monitor_config_custom() {
+        let config = HealthMonitorConfig {
+            interval_secs: 60,
+            max_failures: 5,
+            max_restarts: 10,
+            healthy_reset_secs: 600,
+        };
+        assert_eq!(config.interval_secs, 60);
+        assert_eq!(config.max_failures, 5);
+    }
+
+    // ==================== Request/Response Types Tests ====================
 
     #[test]
     fn test_adapter_inbound_request_parse() {
@@ -968,6 +1537,67 @@ mod tests {
         assert_eq!(req.text, "Hello, world!");
         assert_eq!(req.from.id, "user_1");
         assert_eq!(req.from.username, Some("testuser".to_string()));
+    }
+
+    #[test]
+    fn test_adapter_inbound_request_with_file() {
+        let json = r#"{
+            "instance_id": "telegram_abc123",
+            "chat_id": "12345",
+            "message_id": "msg_001",
+            "from": {
+                "id": "user_1"
+            },
+            "text": "File attached",
+            "file": {
+                "url": "https://example.com/file.pdf",
+                "filename": "document.pdf",
+                "mime_type": "application/pdf"
+            }
+        }"#;
+
+        let req: AdapterInboundRequest = serde_json::from_str(json).unwrap();
+        assert!(req.file.is_some());
+        let file = req.file.unwrap();
+        assert_eq!(file.filename, "document.pdf");
+        assert_eq!(file.mime_type, "application/pdf");
+    }
+
+    #[test]
+    fn test_adapter_inbound_request_with_timestamp() {
+        let json = r#"{
+            "instance_id": "telegram_abc123",
+            "chat_id": "12345",
+            "message_id": "msg_001",
+            "from": {"id": "user_1"},
+            "text": "Hello",
+            "timestamp": "2024-01-15T10:30:00Z"
+        }"#;
+
+        let req: AdapterInboundRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.timestamp, Some("2024-01-15T10:30:00Z".to_string()));
+    }
+
+    #[test]
+    fn test_adapter_user_minimal() {
+        let json = r#"{"id": "user_123"}"#;
+        let user: AdapterUser = serde_json::from_str(json).unwrap();
+        assert_eq!(user.id, "user_123");
+        assert!(user.username.is_none());
+        assert!(user.display_name.is_none());
+    }
+
+    #[test]
+    fn test_adapter_file_info_with_auth() {
+        let json = r#"{
+            "url": "https://example.com/file.pdf",
+            "auth_header": "Bearer token123",
+            "filename": "doc.pdf",
+            "mime_type": "application/pdf"
+        }"#;
+
+        let file: AdapterFileInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(file.auth_header, Some("Bearer token123".to_string()));
     }
 
     #[test]
@@ -998,5 +1628,52 @@ mod tests {
 
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"reply_to_message_id\":\"msg_001\""));
+    }
+
+    #[test]
+    fn test_adapter_send_request_with_file() {
+        let req = AdapterSendRequest {
+            chat_id: "12345".to_string(),
+            text: "File!".to_string(),
+            reply_to_message_id: None,
+            file_path: Some("/tmp/file.pdf".to_string()),
+        };
+
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"file_path\":\"/tmp/file.pdf\""));
+    }
+
+    #[test]
+    fn test_adapter_send_response_parse() {
+        let json = r#"{"protocol_message_id": "msg_123456"}"#;
+        let resp: AdapterSendResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.protocol_message_id, "msg_123456");
+    }
+
+    // ==================== wait_for_adapter_ready Tests ====================
+
+    #[tokio::test]
+    async fn test_wait_for_adapter_ready_timeout() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = Arc::new(
+            AdapterInstanceManager::new(
+                temp_dir.path().to_string_lossy().to_string(),
+                (9000, 9100),
+                "127.0.0.1:8080",
+            )
+            .unwrap(),
+        );
+
+        // Non-existent credential should timeout
+        let ready = wait_for_adapter_ready(
+            &manager,
+            "nonexistent",
+            Duration::from_millis(100),
+            Duration::from_millis(20),
+        )
+        .await;
+
+        assert!(!ready);
     }
 }

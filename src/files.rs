@@ -458,6 +458,19 @@ pub async fn start_cleanup_task(cache: Arc<FileCache>, interval_minutes: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::FileCacheConfig;
+
+    fn test_config(dir: &str) -> FileCacheConfig {
+        FileCacheConfig {
+            directory: dir.to_string(),
+            max_file_size_mb: 10,
+            max_cache_size_mb: 100,
+            ttl_hours: 24,
+            cleanup_interval_minutes: 60,
+            allowed_mime_types: vec!["*/*".to_string()],
+            blocked_mime_types: vec![],
+        }
+    }
 
     #[test]
     fn test_mime_matches() {
@@ -467,5 +480,208 @@ mod tests {
         assert!(mime_matches("text/plain", "text/plain"));
         assert!(mime_matches("anything", "*"));
         assert!(mime_matches("anything/here", "*/*"));
+    }
+
+    #[test]
+    fn test_generate_file_id() {
+        let id1 = FileCache::generate_file_id();
+        let id2 = FileCache::generate_file_id();
+
+        assert!(id1.starts_with("f_"));
+        assert_eq!(id1.len(), 14); // "f_" + 12 chars
+        assert_ne!(id1, id2); // Should be unique
+    }
+
+    #[tokio::test]
+    async fn test_file_cache_new() {
+        let temp_dir = std::env::temp_dir().join("test_file_cache_new");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let config = test_config(temp_dir.to_str().unwrap());
+        let cache = FileCache::new(config, "http://localhost:8080").await;
+
+        assert!(cache.is_ok());
+        assert!(temp_dir.exists());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_store_and_get_file() {
+        let temp_dir = std::env::temp_dir().join("test_store_get_file");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let config = test_config(temp_dir.to_str().unwrap());
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        // Store a file
+        let data = b"Hello, World!".to_vec();
+        let cached = cache
+            .store_file(data.clone(), "test.txt", "text/plain")
+            .await
+            .unwrap();
+
+        assert!(cached.file_id.starts_with("f_"));
+        assert_eq!(cached.filename, "test.txt");
+        assert_eq!(cached.mime_type, "text/plain");
+        assert_eq!(cached.size_bytes, 13);
+
+        // Get the file back
+        let retrieved = cache.get(&cached.file_id).await;
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.filename, "test.txt");
+
+        // Get download URL
+        let url = cache.get_download_url(&cached.file_id);
+        assert!(url.contains(&cached.file_id));
+        assert!(url.starts_with("http://localhost:8080/files/"));
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_delete_file() {
+        let temp_dir = std::env::temp_dir().join("test_delete_file");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let config = test_config(temp_dir.to_str().unwrap());
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        // Store a file
+        let data = b"Delete me".to_vec();
+        let cached = cache
+            .store_file(data, "delete.txt", "text/plain")
+            .await
+            .unwrap();
+
+        // Verify it exists
+        assert!(cache.get(&cached.file_id).await.is_some());
+
+        // Delete it
+        cache.delete(&cached.file_id).await.unwrap();
+
+        // Verify it's gone
+        assert!(cache.get(&cached.file_id).await.is_none());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_validate_mime_type() {
+        let temp_dir = std::env::temp_dir().join("test_validate_mime");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        // Config with blocked types
+        let mut config = test_config(temp_dir.to_str().unwrap());
+        config.blocked_mime_types = vec!["application/x-executable".to_string()];
+        config.allowed_mime_types = vec!["image/*".to_string(), "text/*".to_string()];
+
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        // Should pass - image type is allowed
+        assert!(cache.validate_mime_type("image/png").is_ok());
+
+        // Should pass - text type is allowed
+        assert!(cache.validate_mime_type("text/plain").is_ok());
+
+        // Should fail - blocked type
+        assert!(
+            cache
+                .validate_mime_type("application/x-executable")
+                .is_err()
+        );
+
+        // Should fail - not in allowed list
+        assert!(cache.validate_mime_type("video/mp4").is_err());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_file_too_large() {
+        let temp_dir = std::env::temp_dir().join("test_file_too_large");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let mut config = test_config(temp_dir.to_str().unwrap());
+        config.max_file_size_mb = 1; // 1 MB limit
+
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        // Create data larger than limit (1.5 MB)
+        let data = vec![0u8; 1024 * 1024 + 512 * 1024];
+        let result = cache
+            .store_file(data, "large.bin", "application/octet-stream")
+            .await;
+
+        assert!(result.is_err());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_stats() {
+        let temp_dir = std::env::temp_dir().join("test_file_stats");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let config = test_config(temp_dir.to_str().unwrap());
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        // Empty cache
+        let stats = cache.stats().await;
+        assert_eq!(stats.file_count, 0);
+        assert_eq!(stats.total_bytes, 0);
+
+        // Store some files
+        cache
+            .store_file(b"file1".to_vec(), "f1.txt", "text/plain")
+            .await
+            .unwrap();
+        cache
+            .store_file(b"file2 longer".to_vec(), "f2.txt", "text/plain")
+            .await
+            .unwrap();
+
+        let stats = cache.stats().await;
+        assert_eq!(stats.file_count, 2);
+        assert_eq!(stats.total_bytes, 5 + 12);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_get_nonexistent() {
+        let temp_dir = std::env::temp_dir().join("test_get_nonexistent");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let config = test_config(temp_dir.to_str().unwrap());
+        let cache = FileCache::new(config, "http://localhost:8080")
+            .await
+            .unwrap();
+
+        assert!(cache.get("nonexistent").await.is_none());
+        // get_download_url always returns a URL regardless of whether file exists
+        let url = cache.get_download_url("nonexistent");
+        assert!(url.contains("nonexistent"));
+        assert!(cache.get_file_path("nonexistent").await.is_none());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

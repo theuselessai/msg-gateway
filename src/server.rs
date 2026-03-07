@@ -670,3 +670,67 @@ async fn serve_file(
         content,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== SendFileAttachment Tests ====================
+
+    #[test]
+    fn test_send_file_attachment_parse() {
+        let json = r#"{
+            "url": "https://example.com/file.pdf",
+            "filename": "document.pdf",
+            "mime_type": "application/pdf"
+        }"#;
+
+        let attachment: SendFileAttachment = serde_json::from_str(json).unwrap();
+        assert_eq!(attachment.url, "https://example.com/file.pdf");
+        assert_eq!(attachment.filename, "document.pdf");
+        assert_eq!(attachment.mime_type, "application/pdf");
+        assert!(attachment.auth_header.is_none());
+    }
+
+    #[test]
+    fn test_send_file_attachment_with_auth() {
+        let json = r#"{
+            "url": "https://example.com/file.pdf",
+            "filename": "document.pdf",
+            "mime_type": "application/pdf",
+            "auth_header": "Bearer token123"
+        }"#;
+
+        let attachment: SendFileAttachment = serde_json::from_str(json).unwrap();
+        assert_eq!(attachment.auth_header, Some("Bearer token123".to_string()));
+    }
+
+    // ==================== Content-Disposition Escaping Tests ====================
+
+    #[test]
+    fn test_content_disposition_escaping() {
+        // Test filename with quotes
+        let filename = r#"file"name.pdf"#;
+        let content_disposition = format!(
+            "attachment; filename=\"{}\"",
+            filename.replace("\"", "\\\"")
+        );
+        assert_eq!(
+            content_disposition,
+            r#"attachment; filename="file\"name.pdf""#
+        );
+    }
+
+    #[test]
+    fn test_content_disposition_normal() {
+        let filename = "document.pdf";
+        let content_disposition = format!(
+            "attachment; filename=\"{}\"",
+            filename.replace("\"", "\\\"")
+        );
+        assert_eq!(
+            content_disposition,
+            r#"attachment; filename="document.pdf""#
+        );
+    }
+}

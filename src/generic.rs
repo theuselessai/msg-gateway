@@ -344,3 +344,306 @@ pub async fn send_to_ws(
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_ws_message(text: &str, message_id: &str) -> WsOutboundMessage {
+        WsOutboundMessage {
+            text: text.to_string(),
+            timestamp: chrono::Utc::now(),
+            message_id: message_id.to_string(),
+        }
+    }
+
+    // ==================== WsRegistry Tests ====================
+
+    #[test]
+    fn test_new_ws_registry() {
+        let registry = new_ws_registry();
+        // Should be empty
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let reg = registry.read().await;
+            assert!(reg.is_empty());
+        });
+    }
+
+    #[tokio::test]
+    async fn test_ws_registry_add_channel() {
+        let registry = new_ws_registry();
+
+        // Add a channel
+        {
+            let mut reg = registry.write().await;
+            let (tx, _) = broadcast::channel::<WsOutboundMessage>(100);
+            reg.insert(("cred1".to_string(), "chat1".to_string()), tx);
+        }
+
+        // Verify it exists
+        {
+            let reg = registry.read().await;
+            assert!(reg.contains_key(&("cred1".to_string(), "chat1".to_string())));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ws_registry_remove_channel() {
+        let registry = new_ws_registry();
+
+        // Add and remove
+        {
+            let mut reg = registry.write().await;
+            let (tx, _) = broadcast::channel::<WsOutboundMessage>(100);
+            reg.insert(("cred1".to_string(), "chat1".to_string()), tx);
+        }
+
+        {
+            let mut reg = registry.write().await;
+            reg.remove(&("cred1".to_string(), "chat1".to_string()));
+        }
+
+        {
+            let reg = registry.read().await;
+            assert!(!reg.contains_key(&("cred1".to_string(), "chat1".to_string())));
+        }
+    }
+
+    // ==================== send_to_ws Tests ====================
+
+    #[tokio::test]
+    async fn test_send_to_ws_no_connection() {
+        let registry = new_ws_registry();
+
+        let message = make_ws_message("Hello", "msg_123");
+
+        let result = send_to_ws(&registry, "cred1", "chat1", message).await;
+        assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn test_send_to_ws_with_subscriber() {
+        let registry = new_ws_registry();
+
+        // Add a channel with subscriber
+        let mut rx = {
+            let mut reg = registry.write().await;
+            let (tx, rx) = broadcast::channel::<WsOutboundMessage>(100);
+            reg.insert(("cred1".to_string(), "chat1".to_string()), tx);
+            rx
+        };
+
+        let message = make_ws_message("Hello", "msg_123");
+
+        let result = send_to_ws(&registry, "cred1", "chat1", message).await;
+        assert!(result);
+
+        // Verify message was received
+        let received = rx.recv().await.unwrap();
+        assert_eq!(received.text, "Hello");
+        assert_eq!(received.message_id, "msg_123");
+    }
+
+    #[tokio::test]
+    async fn test_send_to_ws_no_subscribers() {
+        let registry = new_ws_registry();
+
+        // Add a channel without keeping the receiver (so no subscribers)
+        {
+            let mut reg = registry.write().await;
+            let (tx, _rx) = broadcast::channel::<WsOutboundMessage>(100);
+            // Drop the receiver immediately
+            drop(_rx);
+            reg.insert(("cred1".to_string(), "chat1".to_string()), tx);
+        }
+
+        let message = make_ws_message("Hello", "msg_456");
+
+        let result = send_to_ws(&registry, "cred1", "chat1", message).await;
+        // Should return false because no active subscribers
+        assert!(!result);
+    }
+
+    // ==================== ChatRequest Tests ====================
+
+    #[test]
+    fn test_chat_request_parse() {
+        let json = r#"{
+            "chat_id": "12345",
+            "text": "Hello, world!",
+            "from": {
+                "id": "user_1",
+                "display_name": "Test User"
+            }
+        }"#;
+
+        let req: ChatRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.chat_id, "12345");
+        assert_eq!(req.text, "Hello, world!");
+        assert_eq!(req.from.id, "user_1");
+        assert_eq!(req.from.display_name, Some("Test User".to_string()));
+    }
+
+    #[test]
+    fn test_chat_request_minimal() {
+        let json = r#"{
+            "chat_id": "12345",
+            "text": "Hello",
+            "from": {"id": "user_1"}
+        }"#;
+
+        let req: ChatRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.chat_id, "12345");
+        assert_eq!(req.from.id, "user_1");
+        assert!(req.from.display_name.is_none());
+    }
+
+    // ==================== ChatUser Tests ====================
+
+    #[test]
+    fn test_chat_user_parse() {
+        let json = r#"{"id": "user_123", "display_name": "John Doe"}"#;
+        let user: ChatUser = serde_json::from_str(json).unwrap();
+        assert_eq!(user.id, "user_123");
+        assert_eq!(user.display_name, Some("John Doe".to_string()));
+    }
+
+    #[test]
+    fn test_chat_user_minimal() {
+        let json = r#"{"id": "user_123"}"#;
+        let user: ChatUser = serde_json::from_str(json).unwrap();
+        assert_eq!(user.id, "user_123");
+        assert!(user.display_name.is_none());
+    }
+
+    // ==================== ChatResponse Tests ====================
+
+    #[test]
+    fn test_chat_response_serialize() {
+        let response = ChatResponse {
+            message_id: "msg_123".to_string(),
+            timestamp: chrono::Utc::now(),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"message_id\":\"msg_123\""));
+        assert!(json.contains("\"timestamp\""));
+    }
+
+    // ==================== Multiple Channels Tests ====================
+
+    #[tokio::test]
+    async fn test_ws_registry_multiple_chats() {
+        let registry = new_ws_registry();
+
+        // Add multiple channels
+        let mut rx1;
+        let mut rx2;
+        {
+            let mut reg = registry.write().await;
+            let (tx1, r1) = broadcast::channel::<WsOutboundMessage>(100);
+            let (tx2, r2) = broadcast::channel::<WsOutboundMessage>(100);
+            reg.insert(("cred1".to_string(), "chat1".to_string()), tx1);
+            reg.insert(("cred1".to_string(), "chat2".to_string()), tx2);
+            rx1 = r1;
+            rx2 = r2;
+        }
+
+        // Send to chat1
+        let msg1 = make_ws_message("Message for chat1", "msg_1");
+        assert!(send_to_ws(&registry, "cred1", "chat1", msg1).await);
+
+        // Send to chat2
+        let msg2 = make_ws_message("Message for chat2", "msg_2");
+        assert!(send_to_ws(&registry, "cred1", "chat2", msg2).await);
+
+        // Verify correct routing
+        let received1 = rx1.recv().await.unwrap();
+        assert_eq!(received1.text, "Message for chat1");
+
+        let received2 = rx2.recv().await.unwrap();
+        assert_eq!(received2.text, "Message for chat2");
+    }
+
+    #[tokio::test]
+    async fn test_ws_registry_different_credentials() {
+        let registry = new_ws_registry();
+
+        // Add channels for different credentials
+        let mut rx_cred1;
+        let mut rx_cred2;
+        {
+            let mut reg = registry.write().await;
+            let (tx1, r1) = broadcast::channel::<WsOutboundMessage>(100);
+            let (tx2, r2) = broadcast::channel::<WsOutboundMessage>(100);
+            reg.insert(("cred1".to_string(), "chat".to_string()), tx1);
+            reg.insert(("cred2".to_string(), "chat".to_string()), tx2);
+            rx_cred1 = r1;
+            rx_cred2 = r2;
+        }
+
+        // Send to cred1
+        let msg = make_ws_message("For cred1", "msg_1");
+        assert!(send_to_ws(&registry, "cred1", "chat", msg).await);
+
+        // Only cred1 should receive
+        let received = rx_cred1.recv().await.unwrap();
+        assert_eq!(received.text, "For cred1");
+
+        // cred2 should not have received (try_recv returns error)
+        assert!(rx_cred2.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_to_ws_multiple_messages() {
+        let registry = new_ws_registry();
+
+        let mut rx = {
+            let mut reg = registry.write().await;
+            let (tx, rx) = broadcast::channel::<WsOutboundMessage>(100);
+            reg.insert(("cred1".to_string(), "chat1".to_string()), tx);
+            rx
+        };
+
+        // Send multiple messages
+        for i in 1..=5 {
+            let message = make_ws_message(&format!("Message {}", i), &format!("msg_{}", i));
+            let result = send_to_ws(&registry, "cred1", "chat1", message).await;
+            assert!(result);
+        }
+
+        // Verify all messages received in order
+        for i in 1..=5 {
+            let received = rx.recv().await.unwrap();
+            assert_eq!(received.text, format!("Message {}", i));
+            assert_eq!(received.message_id, format!("msg_{}", i));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ws_registry_broadcast_to_multiple_subscribers() {
+        let registry = new_ws_registry();
+
+        // Add a channel with multiple subscribers
+        let (mut rx1, mut rx2);
+        {
+            let mut reg = registry.write().await;
+            let (tx, r1) = broadcast::channel::<WsOutboundMessage>(100);
+            rx1 = r1;
+            rx2 = tx.subscribe();
+            reg.insert(("cred1".to_string(), "chat1".to_string()), tx);
+        }
+
+        let message = make_ws_message("Broadcast message", "msg_broadcast");
+        let result = send_to_ws(&registry, "cred1", "chat1", message).await;
+        assert!(result);
+
+        // Both subscribers should receive the message
+        let received1 = rx1.recv().await.unwrap();
+        let received2 = rx2.recv().await.unwrap();
+
+        assert_eq!(received1.text, "Broadcast message");
+        assert_eq!(received2.text, "Broadcast message");
+    }
+}

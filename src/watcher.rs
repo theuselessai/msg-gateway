@@ -235,3 +235,297 @@ async fn spawn_adapter(
 fn credential_changed(old: &CredentialConfig, new: &CredentialConfig) -> bool {
     old.adapter != new.adapter || old.token != new.token || old.config != new.config
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{
+        AuthConfig, BackendProtocol, Config, CredentialConfig, GatewayConfig, TargetConfig,
+    };
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn make_credential(adapter: &str, token: &str, active: bool) -> CredentialConfig {
+        CredentialConfig {
+            adapter: adapter.to_string(),
+            token: token.to_string(),
+            active,
+            emergency: false,
+            config: None,
+            target: None,
+            route: serde_json::json!({"test": true}),
+        }
+    }
+
+    fn make_config(credentials: Vec<(&str, CredentialConfig)>) -> Config {
+        Config {
+            gateway: GatewayConfig {
+                listen: "127.0.0.1:8080".to_string(),
+                admin_token: "test-admin-token".to_string(),
+                default_target: TargetConfig {
+                    protocol: BackendProtocol::Pipelit,
+                    inbound_url: Some("http://localhost:9000/inbound".to_string()),
+                    base_url: None,
+                    token: "test-backend-token".to_string(),
+                    poll_interval_ms: None,
+                },
+                adapters_dir: "./adapters".to_string(),
+                adapter_port_range: (9000, 9100),
+                file_cache: None,
+            },
+            auth: AuthConfig {
+                send_token: "test-send-token".to_string(),
+            },
+            health_checks: HashMap::new(),
+            credentials: credentials
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+        }
+    }
+
+    fn make_adapter_manager() -> Arc<AdapterInstanceManager> {
+        Arc::new(
+            AdapterInstanceManager::new("./adapters".to_string(), (19000, 19100), "127.0.0.1:8080")
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn test_credential_changed_same() {
+        let cred1 = make_credential("telegram", "token123", true);
+        let cred2 = make_credential("telegram", "token123", true);
+        assert!(!credential_changed(&cred1, &cred2));
+    }
+
+    #[test]
+    fn test_credential_changed_adapter() {
+        let cred1 = make_credential("telegram", "token123", true);
+        let cred2 = make_credential("discord", "token123", true);
+        assert!(credential_changed(&cred1, &cred2));
+    }
+
+    #[test]
+    fn test_credential_changed_token() {
+        let cred1 = make_credential("telegram", "token123", true);
+        let cred2 = make_credential("telegram", "token456", true);
+        assert!(credential_changed(&cred1, &cred2));
+    }
+
+    #[test]
+    fn test_credential_changed_active_not_considered() {
+        // Active status change should NOT trigger restart (handled separately)
+        let cred1 = make_credential("telegram", "token123", true);
+        let cred2 = make_credential("telegram", "token123", false);
+        assert!(!credential_changed(&cred1, &cred2));
+    }
+
+    #[test]
+    fn test_credential_changed_config() {
+        let mut cred1 = make_credential("telegram", "token123", true);
+        let mut cred2 = make_credential("telegram", "token123", true);
+
+        cred1.config = Some(serde_json::json!({"key": "value1"}));
+        cred2.config = Some(serde_json::json!({"key": "value2"}));
+
+        assert!(credential_changed(&cred1, &cred2));
+    }
+
+    #[test]
+    fn test_credential_changed_config_none_to_some() {
+        let mut cred1 = make_credential("telegram", "token123", true);
+        let mut cred2 = make_credential("telegram", "token123", true);
+
+        cred1.config = None;
+        cred2.config = Some(serde_json::json!({"key": "value"}));
+
+        assert!(credential_changed(&cred1, &cred2));
+    }
+
+    // Helper to check if credential is registered in the manager
+    async fn is_registered(manager: &CredentialManager, credential_id: &str) -> bool {
+        manager.registry.is_running(credential_id).await
+    }
+
+    #[tokio::test]
+    async fn test_sync_adapters_new_credential() {
+        let manager = Arc::new(CredentialManager::new());
+        let adapter_manager = make_adapter_manager();
+
+        let old_config = make_config(vec![]);
+        let new_config = make_config(vec![("cred1", make_credential("generic", "token1", true))]);
+
+        sync_adapters(&old_config, &new_config, &manager, &adapter_manager).await;
+
+        // Generic adapter should be registered in the credential manager
+        assert!(is_registered(&manager, "cred1").await);
+    }
+
+    #[tokio::test]
+    async fn test_sync_adapters_removed_credential() {
+        let manager = Arc::new(CredentialManager::new());
+        let adapter_manager = make_adapter_manager();
+
+        // First add a credential
+        let old_config = make_config(vec![("cred1", make_credential("generic", "token1", true))]);
+        let empty_config = make_config(vec![]);
+
+        // Manually spawn to simulate existing state
+        manager
+            .spawn_task(
+                "cred1".to_string(),
+                make_credential("generic", "token1", true),
+            )
+            .await;
+
+        // Now sync with empty config (credential removed)
+        sync_adapters(&old_config, &empty_config, &manager, &adapter_manager).await;
+
+        // Should be removed from credential manager
+        assert!(!is_registered(&manager, "cred1").await);
+    }
+
+    #[tokio::test]
+    async fn test_sync_adapters_deactivated_credential() {
+        let manager = Arc::new(CredentialManager::new());
+        let adapter_manager = make_adapter_manager();
+
+        let old_config = make_config(vec![("cred1", make_credential("generic", "token1", true))]);
+        let new_config = make_config(vec![("cred1", make_credential("generic", "token1", false))]);
+
+        // Manually spawn to simulate existing state
+        manager
+            .spawn_task(
+                "cred1".to_string(),
+                make_credential("generic", "token1", true),
+            )
+            .await;
+
+        sync_adapters(&old_config, &new_config, &manager, &adapter_manager).await;
+
+        // Should be stopped (removed from credential manager)
+        assert!(!is_registered(&manager, "cred1").await);
+    }
+
+    #[tokio::test]
+    async fn test_sync_adapters_activated_credential() {
+        let manager = Arc::new(CredentialManager::new());
+        let adapter_manager = make_adapter_manager();
+
+        let old_config = make_config(vec![("cred1", make_credential("generic", "token1", false))]);
+        let new_config = make_config(vec![("cred1", make_credential("generic", "token1", true))]);
+
+        sync_adapters(&old_config, &new_config, &manager, &adapter_manager).await;
+
+        // Should be started (registered in credential manager)
+        assert!(is_registered(&manager, "cred1").await);
+    }
+
+    #[tokio::test]
+    async fn test_sync_adapters_config_changed() {
+        let manager = Arc::new(CredentialManager::new());
+        let adapter_manager = make_adapter_manager();
+
+        let old_config = make_config(vec![("cred1", make_credential("generic", "token1", true))]);
+
+        let new_cred = make_credential("generic", "token2", true); // token changed
+        let new_config = make_config(vec![("cred1", new_cred)]);
+
+        // Manually spawn to simulate existing state
+        manager
+            .spawn_task(
+                "cred1".to_string(),
+                make_credential("generic", "token1", true),
+            )
+            .await;
+
+        sync_adapters(&old_config, &new_config, &manager, &adapter_manager).await;
+
+        // Should be restarted (still registered)
+        assert!(is_registered(&manager, "cred1").await);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_adapter_generic() {
+        let manager = Arc::new(CredentialManager::new());
+        let adapter_manager = make_adapter_manager();
+
+        let cred = make_credential("generic", "token123", true);
+        spawn_adapter("test_cred", &cred, &manager, &adapter_manager).await;
+
+        // Generic adapter should be registered in credential manager
+        assert!(is_registered(&manager, "test_cred").await);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_adapter_external_not_found() {
+        let manager = Arc::new(CredentialManager::new());
+        let adapter_manager = make_adapter_manager();
+
+        // Use a non-existent adapter name (doesn't exist in adapters dir)
+        let cred = make_credential("nonexistent_adapter", "token123", true);
+        spawn_adapter("test_cred", &cred, &manager, &adapter_manager).await;
+
+        // External adapter spawn should fail (adapter not found), nothing registered
+        assert!(!is_registered(&manager, "test_cred").await);
+    }
+
+    #[tokio::test]
+    async fn test_sync_adapters_multiple_changes() {
+        let manager = Arc::new(CredentialManager::new());
+        let adapter_manager = make_adapter_manager();
+
+        let old_config = make_config(vec![
+            ("keep", make_credential("generic", "token1", true)),
+            ("remove", make_credential("generic", "token2", true)),
+            ("deactivate", make_credential("generic", "token3", true)),
+        ]);
+
+        let new_config = make_config(vec![
+            ("keep", make_credential("generic", "token1", true)),
+            ("deactivate", make_credential("generic", "token3", false)),
+            ("new", make_credential("generic", "token4", true)),
+        ]);
+
+        // Setup initial state - only register in credential manager (generic adapters)
+        for (id, cred) in &old_config.credentials {
+            if cred.active {
+                manager.spawn_task(id.clone(), cred.clone()).await;
+            }
+        }
+
+        sync_adapters(&old_config, &new_config, &manager, &adapter_manager).await;
+
+        // Check expected state:
+        // - keep: should still be running (unchanged)
+        // - remove: should be stopped (removed from config)
+        // - deactivate: should be stopped (deactivated)
+        // - new: should be running (newly added)
+        assert!(is_registered(&manager, "keep").await);
+        assert!(!is_registered(&manager, "remove").await);
+        assert!(!is_registered(&manager, "deactivate").await);
+        assert!(is_registered(&manager, "new").await);
+    }
+
+    #[tokio::test]
+    async fn test_sync_adapters_unchanged_credential() {
+        let manager = Arc::new(CredentialManager::new());
+        let adapter_manager = make_adapter_manager();
+
+        let config = make_config(vec![("cred1", make_credential("generic", "token1", true))]);
+
+        // Setup initial state
+        manager
+            .spawn_task(
+                "cred1".to_string(),
+                make_credential("generic", "token1", true),
+            )
+            .await;
+
+        // Sync with same config (no changes)
+        sync_adapters(&config, &config, &manager, &adapter_manager).await;
+
+        // Should still have the same instance
+        assert!(is_registered(&manager, "cred1").await);
+    }
+}

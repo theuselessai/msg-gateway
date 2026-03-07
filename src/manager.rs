@@ -283,3 +283,520 @@ impl CredentialManager {
 fn credential_changed(old: &CredentialConfig, new: &CredentialConfig) -> bool {
     old.adapter != new.adapter || old.token != new.token || old.config != new.config
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AuthConfig, BackendProtocol, GatewayConfig, TargetConfig};
+
+    fn make_credential(adapter: &str, token: &str, active: bool) -> CredentialConfig {
+        CredentialConfig {
+            adapter: adapter.to_string(),
+            token: token.to_string(),
+            active,
+            emergency: false,
+            config: None,
+            target: None,
+            route: serde_json::json!({"test": true}),
+        }
+    }
+
+    fn make_config(credentials: Vec<(&str, CredentialConfig)>) -> Config {
+        Config {
+            gateway: GatewayConfig {
+                listen: "127.0.0.1:8080".to_string(),
+                admin_token: "test-admin-token".to_string(),
+                default_target: TargetConfig {
+                    protocol: BackendProtocol::Pipelit,
+                    inbound_url: Some("http://localhost:9000/inbound".to_string()),
+                    base_url: None,
+                    token: "test-backend-token".to_string(),
+                    poll_interval_ms: None,
+                },
+                adapters_dir: "./adapters".to_string(),
+                adapter_port_range: (9000, 9100),
+                file_cache: None,
+            },
+            auth: AuthConfig {
+                send_token: "test-send-token".to_string(),
+            },
+            health_checks: HashMap::new(),
+            credentials: credentials
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+        }
+    }
+
+    // ==================== TaskRegistry Tests ====================
+
+    #[tokio::test]
+    async fn test_task_registry_new() {
+        let registry = TaskRegistry::new();
+        let status = registry.get_all_status().await;
+        assert!(status.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_task_registry_default() {
+        let registry = TaskRegistry::default();
+        let status = registry.get_all_status().await;
+        assert!(status.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_task_registry_register() {
+        let registry = TaskRegistry::new();
+        registry
+            .register(
+                "cred1".to_string(),
+                "instance_123".to_string(),
+                "generic".to_string(),
+                0,
+            )
+            .await;
+
+        assert!(registry.is_running("cred1").await);
+        assert_eq!(
+            registry.get_status("cred1").await,
+            Some(InstanceStatus::Running)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_registry_get_instance() {
+        let registry = TaskRegistry::new();
+        registry
+            .register(
+                "cred1".to_string(),
+                "instance_123".to_string(),
+                "telegram".to_string(),
+                9001,
+            )
+            .await;
+
+        let instance = registry.get_instance("cred1").await;
+        assert_eq!(instance, Some(("instance_123".to_string(), 9001)));
+    }
+
+    #[tokio::test]
+    async fn test_task_registry_get_instance_not_found() {
+        let registry = TaskRegistry::new();
+        let instance = registry.get_instance("nonexistent").await;
+        assert_eq!(instance, None);
+    }
+
+    #[tokio::test]
+    async fn test_task_registry_remove() {
+        let registry = TaskRegistry::new();
+        registry
+            .register(
+                "cred1".to_string(),
+                "instance_123".to_string(),
+                "generic".to_string(),
+                0,
+            )
+            .await;
+
+        let removed = registry.remove("cred1").await;
+        assert!(removed.is_some());
+        assert!(!registry.is_running("cred1").await);
+    }
+
+    #[tokio::test]
+    async fn test_task_registry_remove_nonexistent() {
+        let registry = TaskRegistry::new();
+        let removed = registry.remove("nonexistent").await;
+        assert!(removed.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_task_registry_update_status() {
+        let registry = TaskRegistry::new();
+        registry
+            .register(
+                "cred1".to_string(),
+                "instance_123".to_string(),
+                "generic".to_string(),
+                0,
+            )
+            .await;
+
+        registry
+            .update_status("cred1", InstanceStatus::Error("test error".to_string()))
+            .await;
+
+        let status = registry.get_status("cred1").await;
+        assert_eq!(
+            status,
+            Some(InstanceStatus::Error("test error".to_string()))
+        );
+        // is_running should return false for Error status
+        assert!(!registry.is_running("cred1").await);
+    }
+
+    #[tokio::test]
+    async fn test_task_registry_update_status_nonexistent() {
+        let registry = TaskRegistry::new();
+        // Should not panic
+        registry
+            .update_status("nonexistent", InstanceStatus::Stopped)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_task_registry_get_all_status() {
+        let registry = TaskRegistry::new();
+        registry
+            .register(
+                "cred1".to_string(),
+                "instance_1".to_string(),
+                "generic".to_string(),
+                0,
+            )
+            .await;
+        registry
+            .register(
+                "cred2".to_string(),
+                "instance_2".to_string(),
+                "telegram".to_string(),
+                9001,
+            )
+            .await;
+
+        let all_status = registry.get_all_status().await;
+        assert_eq!(all_status.len(), 2);
+        assert_eq!(
+            all_status.get("cred1"),
+            Some(&("generic".to_string(), InstanceStatus::Running))
+        );
+        assert_eq!(
+            all_status.get("cred2"),
+            Some(&("telegram".to_string(), InstanceStatus::Running))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_registry_get_status_nonexistent() {
+        let registry = TaskRegistry::new();
+        assert_eq!(registry.get_status("nonexistent").await, None);
+    }
+
+    #[tokio::test]
+    async fn test_task_registry_is_running_false_for_stopped() {
+        let registry = TaskRegistry::new();
+        registry
+            .register(
+                "cred1".to_string(),
+                "instance_123".to_string(),
+                "generic".to_string(),
+                0,
+            )
+            .await;
+        registry
+            .update_status("cred1", InstanceStatus::Stopped)
+            .await;
+
+        assert!(!registry.is_running("cred1").await);
+    }
+
+    // ==================== CredentialManager Tests ====================
+
+    #[tokio::test]
+    async fn test_credential_manager_new() {
+        let manager = CredentialManager::new();
+        let status = manager.registry.get_all_status().await;
+        assert!(status.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_default() {
+        let manager = CredentialManager::default();
+        let status = manager.registry.get_all_status().await;
+        assert!(status.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_spawn_task_generic() {
+        let manager = CredentialManager::new();
+        let cred = make_credential("generic", "token123", true);
+
+        manager.spawn_task("cred1".to_string(), cred).await;
+
+        assert!(manager.registry.is_running("cred1").await);
+        let instance = manager.registry.get_instance("cred1").await;
+        assert!(instance.is_some());
+        let (instance_id, port) = instance.unwrap();
+        assert!(instance_id.starts_with("generic_"));
+        assert_eq!(port, 0);
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_spawn_task_external() {
+        let manager = CredentialManager::new();
+        let cred = make_credential("telegram", "token123", true);
+
+        manager.spawn_task("cred1".to_string(), cred).await;
+
+        assert!(manager.registry.is_running("cred1").await);
+        let instance = manager.registry.get_instance("cred1").await;
+        assert!(instance.is_some());
+        let (instance_id, _port) = instance.unwrap();
+        assert!(instance_id.starts_with("telegram_"));
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_spawn_task_already_running() {
+        let manager = CredentialManager::new();
+        let cred = make_credential("generic", "token123", true);
+
+        // Spawn first time
+        manager.spawn_task("cred1".to_string(), cred.clone()).await;
+        let first_instance = manager.registry.get_instance("cred1").await.unwrap();
+
+        // Try to spawn again - should be skipped
+        manager.spawn_task("cred1".to_string(), cred).await;
+        let second_instance = manager.registry.get_instance("cred1").await.unwrap();
+
+        // Instance ID should be the same (not replaced)
+        assert_eq!(first_instance.0, second_instance.0);
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_stop_task_generic() {
+        let manager = CredentialManager::new();
+        let cred = make_credential("generic", "token123", true);
+
+        manager.spawn_task("cred1".to_string(), cred).await;
+        assert!(manager.registry.is_running("cred1").await);
+
+        manager.stop_task("cred1").await;
+        assert!(!manager.registry.is_running("cred1").await);
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_stop_task_external() {
+        let manager = CredentialManager::new();
+        let cred = make_credential("telegram", "token123", true);
+
+        manager.spawn_task("cred1".to_string(), cred).await;
+        assert!(manager.registry.is_running("cred1").await);
+
+        manager.stop_task("cred1").await;
+        assert!(!manager.registry.is_running("cred1").await);
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_stop_task_nonexistent() {
+        let manager = CredentialManager::new();
+        // Should not panic
+        manager.stop_task("nonexistent").await;
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_start_all() {
+        let manager = CredentialManager::new();
+        let config = make_config(vec![
+            ("active1", make_credential("generic", "token1", true)),
+            ("active2", make_credential("telegram", "token2", true)),
+            ("inactive", make_credential("generic", "token3", false)),
+        ]);
+
+        manager.start_all(&config).await;
+
+        assert!(manager.registry.is_running("active1").await);
+        assert!(manager.registry.is_running("active2").await);
+        assert!(!manager.registry.is_running("inactive").await);
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_shutdown() {
+        let manager = CredentialManager::new();
+        let config = make_config(vec![
+            ("cred1", make_credential("generic", "token1", true)),
+            ("cred2", make_credential("telegram", "token2", true)),
+        ]);
+
+        manager.start_all(&config).await;
+        assert!(manager.registry.is_running("cred1").await);
+        assert!(manager.registry.is_running("cred2").await);
+
+        manager.shutdown().await;
+
+        assert!(!manager.registry.is_running("cred1").await);
+        assert!(!manager.registry.is_running("cred2").await);
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_sync_with_config_new_credential() {
+        let manager = CredentialManager::new();
+
+        let old_config = make_config(vec![]);
+        let new_config = make_config(vec![("cred1", make_credential("generic", "token1", true))]);
+
+        manager.sync_with_config(&old_config, &new_config).await;
+
+        assert!(manager.registry.is_running("cred1").await);
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_sync_with_config_removed_credential() {
+        let manager = CredentialManager::new();
+
+        let old_config = make_config(vec![("cred1", make_credential("generic", "token1", true))]);
+        let new_config = make_config(vec![]);
+
+        // Start initial state
+        manager.start_all(&old_config).await;
+        assert!(manager.registry.is_running("cred1").await);
+
+        manager.sync_with_config(&old_config, &new_config).await;
+
+        assert!(!manager.registry.is_running("cred1").await);
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_sync_with_config_deactivated() {
+        let manager = CredentialManager::new();
+
+        let old_config = make_config(vec![("cred1", make_credential("generic", "token1", true))]);
+        let new_config = make_config(vec![("cred1", make_credential("generic", "token1", false))]);
+
+        manager.start_all(&old_config).await;
+        assert!(manager.registry.is_running("cred1").await);
+
+        manager.sync_with_config(&old_config, &new_config).await;
+
+        assert!(!manager.registry.is_running("cred1").await);
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_sync_with_config_activated() {
+        let manager = CredentialManager::new();
+
+        let old_config = make_config(vec![("cred1", make_credential("generic", "token1", false))]);
+        let new_config = make_config(vec![("cred1", make_credential("generic", "token1", true))]);
+
+        manager.sync_with_config(&old_config, &new_config).await;
+
+        assert!(manager.registry.is_running("cred1").await);
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_sync_with_config_token_changed() {
+        let manager = CredentialManager::new();
+
+        let old_config = make_config(vec![("cred1", make_credential("generic", "token1", true))]);
+        let new_config = make_config(vec![("cred1", make_credential("generic", "token2", true))]);
+
+        manager.start_all(&old_config).await;
+        let old_instance = manager.registry.get_instance("cred1").await.unwrap();
+
+        manager.sync_with_config(&old_config, &new_config).await;
+
+        // Should still be running but with new instance
+        assert!(manager.registry.is_running("cred1").await);
+        let new_instance = manager.registry.get_instance("cred1").await.unwrap();
+        // Instance ID should be different (restarted)
+        assert_ne!(old_instance.0, new_instance.0);
+    }
+
+    #[tokio::test]
+    async fn test_credential_manager_sync_with_config_adapter_changed() {
+        let manager = CredentialManager::new();
+
+        let old_config = make_config(vec![("cred1", make_credential("generic", "token1", true))]);
+        let new_config = make_config(vec![("cred1", make_credential("telegram", "token1", true))]);
+
+        manager.start_all(&old_config).await;
+
+        manager.sync_with_config(&old_config, &new_config).await;
+
+        // Should still be running with new adapter
+        assert!(manager.registry.is_running("cred1").await);
+        let status = manager.registry.get_all_status().await;
+        assert_eq!(status.get("cred1").unwrap().0, "telegram");
+    }
+
+    // ==================== credential_changed Tests ====================
+
+    #[test]
+    fn test_credential_changed_same() {
+        let cred1 = make_credential("generic", "token123", true);
+        let cred2 = make_credential("generic", "token123", true);
+        assert!(!credential_changed(&cred1, &cred2));
+    }
+
+    #[test]
+    fn test_credential_changed_adapter() {
+        let cred1 = make_credential("generic", "token123", true);
+        let cred2 = make_credential("telegram", "token123", true);
+        assert!(credential_changed(&cred1, &cred2));
+    }
+
+    #[test]
+    fn test_credential_changed_token() {
+        let cred1 = make_credential("generic", "token1", true);
+        let cred2 = make_credential("generic", "token2", true);
+        assert!(credential_changed(&cred1, &cred2));
+    }
+
+    #[test]
+    fn test_credential_changed_active_ignored() {
+        // Active status change is handled separately, not by credential_changed
+        let cred1 = make_credential("generic", "token123", true);
+        let cred2 = make_credential("generic", "token123", false);
+        assert!(!credential_changed(&cred1, &cred2));
+    }
+
+    #[test]
+    fn test_credential_changed_config() {
+        let mut cred1 = make_credential("generic", "token123", true);
+        let mut cred2 = make_credential("generic", "token123", true);
+        cred1.config = Some(serde_json::json!({"key": "value1"}));
+        cred2.config = Some(serde_json::json!({"key": "value2"}));
+        assert!(credential_changed(&cred1, &cred2));
+    }
+
+    #[test]
+    fn test_credential_changed_config_none_vs_some() {
+        let mut cred1 = make_credential("generic", "token123", true);
+        let mut cred2 = make_credential("generic", "token123", true);
+        cred1.config = None;
+        cred2.config = Some(serde_json::json!({"key": "value"}));
+        assert!(credential_changed(&cred1, &cred2));
+    }
+
+    // ==================== InstanceStatus Tests ====================
+
+    #[test]
+    fn test_instance_status_eq() {
+        assert_eq!(InstanceStatus::Running, InstanceStatus::Running);
+        assert_eq!(InstanceStatus::Starting, InstanceStatus::Starting);
+        assert_eq!(InstanceStatus::Stopping, InstanceStatus::Stopping);
+        assert_eq!(InstanceStatus::Stopped, InstanceStatus::Stopped);
+        assert_eq!(
+            InstanceStatus::Error("test".to_string()),
+            InstanceStatus::Error("test".to_string())
+        );
+        assert_ne!(
+            InstanceStatus::Error("test1".to_string()),
+            InstanceStatus::Error("test2".to_string())
+        );
+        assert_ne!(InstanceStatus::Running, InstanceStatus::Stopped);
+    }
+
+    #[test]
+    fn test_instance_status_clone() {
+        let status = InstanceStatus::Error("test error".to_string());
+        let cloned = status.clone();
+        assert_eq!(status, cloned);
+    }
+
+    #[test]
+    fn test_instance_status_debug() {
+        let status = InstanceStatus::Running;
+        let debug_str = format!("{:?}", status);
+        assert!(debug_str.contains("Running"));
+    }
+}
