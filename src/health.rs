@@ -1,0 +1,377 @@
+//! Health Check and Emergency Mode
+//!
+//! Monitors the target server (Pipelit) health and triggers emergency alerts
+//! when it becomes unreachable.
+
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
+
+use crate::config::HealthCheckConfig;
+use crate::message::InboundMessage;
+use crate::server::AppState;
+
+/// Health check state
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealthState {
+    /// Target server is healthy
+    Healthy,
+    /// Target server has some failures but not yet critical
+    Degraded,
+    /// Target server is down, emergency mode active
+    Down,
+    /// Target server is recovering from down state
+    Recovering,
+}
+
+impl std::fmt::Display for HealthState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HealthState::Healthy => write!(f, "healthy"),
+            HealthState::Degraded => write!(f, "degraded"),
+            HealthState::Down => write!(f, "down"),
+            HealthState::Recovering => write!(f, "recovering"),
+        }
+    }
+}
+
+/// Health monitor state
+pub struct HealthMonitor {
+    /// Current health state
+    pub state: RwLock<HealthState>,
+    /// Consecutive failure count
+    pub failure_count: RwLock<u32>,
+    /// Last successful health check
+    pub last_healthy: RwLock<Option<Instant>>,
+    /// Buffered messages during outage
+    pub buffer: RwLock<VecDeque<InboundMessage>>,
+    /// Maximum buffer size
+    pub max_buffer_size: usize,
+}
+
+impl HealthMonitor {
+    pub fn new(max_buffer_size: usize) -> Self {
+        Self {
+            state: RwLock::new(HealthState::Healthy),
+            failure_count: RwLock::new(0),
+            last_healthy: RwLock::new(Some(Instant::now())),
+            buffer: RwLock::new(VecDeque::new()),
+            max_buffer_size,
+        }
+    }
+
+    /// Get current state
+    pub async fn get_state(&self) -> HealthState {
+        *self.state.read().await
+    }
+
+    /// Record a successful health check
+    pub async fn record_success(&self) -> Option<HealthState> {
+        let old_state = *self.state.read().await;
+        
+        *self.failure_count.write().await = 0;
+        *self.last_healthy.write().await = Some(Instant::now());
+
+        let new_state = match old_state {
+            HealthState::Down => HealthState::Recovering,
+            HealthState::Recovering => HealthState::Healthy,
+            _ => HealthState::Healthy,
+        };
+
+        if new_state != old_state {
+            *self.state.write().await = new_state;
+            tracing::info!(
+                old_state = %old_state,
+                new_state = %new_state,
+                "Health state changed"
+            );
+            Some(new_state)
+        } else {
+            None
+        }
+    }
+
+    /// Record a failed health check
+    pub async fn record_failure(&self, alert_threshold: u32) -> Option<HealthState> {
+        let old_state = *self.state.read().await;
+        
+        let mut count = self.failure_count.write().await;
+        *count += 1;
+        let failure_count = *count;
+        drop(count);
+
+        let new_state = if failure_count >= alert_threshold {
+            HealthState::Down
+        } else {
+            HealthState::Degraded
+        };
+
+        if new_state != old_state {
+            *self.state.write().await = new_state;
+            tracing::warn!(
+                old_state = %old_state,
+                new_state = %new_state,
+                failure_count = failure_count,
+                "Health state changed"
+            );
+            Some(new_state)
+        } else {
+            None
+        }
+    }
+
+    /// Buffer a message during outage
+    pub async fn buffer_message(&self, message: InboundMessage) -> bool {
+        let mut buffer = self.buffer.write().await;
+        
+        if buffer.len() >= self.max_buffer_size {
+            // Drop oldest message
+            buffer.pop_front();
+            tracing::warn!("Message buffer full, dropping oldest message");
+        }
+        
+        buffer.push_back(message);
+        tracing::debug!(buffer_size = buffer.len(), "Message buffered");
+        true
+    }
+
+    /// Drain buffered messages
+    pub async fn drain_buffer(&self) -> Vec<InboundMessage> {
+        let mut buffer = self.buffer.write().await;
+        let messages: Vec<_> = buffer.drain(..).collect();
+        tracing::info!(count = messages.len(), "Draining buffered messages");
+        messages
+    }
+
+    /// Get buffer size
+    pub async fn buffer_size(&self) -> usize {
+        self.buffer.read().await.len()
+    }
+
+    /// Get last healthy timestamp
+    pub async fn last_healthy_ago(&self) -> Option<Duration> {
+        self.last_healthy.read().await.map(|t| t.elapsed())
+    }
+}
+
+/// Start the health check loop
+pub async fn start_health_check(
+    state: Arc<AppState>,
+    config_name: String,
+    config: HealthCheckConfig,
+) {
+    let interval = Duration::from_secs(config.interval_seconds as u64);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+
+    tracing::info!(
+        name = %config_name,
+        url = %config.url,
+        interval_secs = config.interval_seconds,
+        alert_after = config.alert_after_failures,
+        "Starting health check"
+    );
+
+    loop {
+        tokio::time::sleep(interval).await;
+
+        let result = client.get(&config.url).send().await;
+
+        match result {
+            Ok(resp) if resp.status().is_success() => {
+                let state_change = state.health_monitor.record_success().await;
+                
+                if let Some(new_state) = state_change {
+                    match new_state {
+                        HealthState::Recovering => {
+                            // Drain buffer and send messages
+                            let messages = state.health_monitor.drain_buffer().await;
+                            if !messages.is_empty() {
+                                drain_buffered_messages(&state, messages).await;
+                            }
+                        }
+                        HealthState::Healthy => {
+                            // Send recovery notification
+                            send_recovery_notification(&state, &config).await;
+                        }
+                        _ => {}
+                    }
+                }
+
+                tracing::debug!(name = %config_name, "Health check passed");
+            }
+            Ok(resp) => {
+                tracing::warn!(
+                    name = %config_name,
+                    status = %resp.status(),
+                    "Health check failed (non-2xx)"
+                );
+                
+                let state_change = state
+                    .health_monitor
+                    .record_failure(config.alert_after_failures)
+                    .await;
+
+                if let Some(HealthState::Down) = state_change {
+                    send_emergency_alert(&state, &config).await;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    name = %config_name,
+                    error = %e,
+                    "Health check failed (network error)"
+                );
+                
+                let state_change = state
+                    .health_monitor
+                    .record_failure(config.alert_after_failures)
+                    .await;
+
+                if let Some(HealthState::Down) = state_change {
+                    send_emergency_alert(&state, &config).await;
+                }
+            }
+        }
+    }
+}
+
+/// Send emergency alert to all emergency credentials
+async fn send_emergency_alert(state: &AppState, config: &HealthCheckConfig) {
+    let app_config = state.config.read().await;
+    
+    let last_healthy = state
+        .health_monitor
+        .last_healthy_ago()
+        .await
+        .map(|d| format!("{:.0}s ago", d.as_secs_f64()))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let message = format!(
+        "🚨 ALERT: Target server is unreachable!\n\
+         Last healthy: {}\n\
+         Messages are being buffered.",
+        last_healthy
+    );
+
+    for cred_id in &config.notify_credentials {
+        if let Some(cred) = app_config.credentials.get(cred_id) {
+            if cred.active && cred.emergency {
+                tracing::info!(
+                    credential_id = %cred_id,
+                    "Sending emergency alert"
+                );
+                
+                // For generic adapter, we can't really send an alert
+                // since it requires a client to be connected.
+                // For external adapters, we would POST to them.
+                if cred.adapter == "generic" {
+                    tracing::warn!(
+                        credential_id = %cred_id,
+                        "Cannot send emergency alert via generic adapter (no persistent connection)"
+                    );
+                } else {
+                    // TODO: POST to external adapter's /send endpoint
+                    tracing::info!(
+                        credential_id = %cred_id,
+                        adapter = %cred.adapter,
+                        message = %message,
+                        "Emergency alert (would be sent via adapter)"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Send recovery notification
+async fn send_recovery_notification(state: &AppState, config: &HealthCheckConfig) {
+    let app_config = state.config.read().await;
+
+    let message = "✅ Target server has recovered. All systems operational.";
+
+    for cred_id in &config.notify_credentials {
+        if let Some(cred) = app_config.credentials.get(cred_id) {
+            if cred.active && cred.emergency {
+                tracing::info!(
+                    credential_id = %cred_id,
+                    "Sending recovery notification"
+                );
+                
+                if cred.adapter == "generic" {
+                    tracing::warn!(
+                        credential_id = %cred_id,
+                        "Cannot send recovery notification via generic adapter"
+                    );
+                } else {
+                    // TODO: POST to external adapter's /send endpoint
+                    tracing::info!(
+                        credential_id = %cred_id,
+                        adapter = %cred.adapter,
+                        message = %message,
+                        "Recovery notification (would be sent via adapter)"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Drain buffered messages to the target server
+async fn drain_buffered_messages(state: &AppState, messages: Vec<InboundMessage>) {
+    use crate::backend::{create_adapter, resolve_target};
+    
+    for message in messages {
+        let config = state.config.read().await;
+        
+        // Resolve target for this message's credential
+        let adapter = if let Some(credential) = config.credentials.get(&message.credential_id) {
+            let target = resolve_target(credential, &config.gateway.default_target);
+            match create_adapter(target) {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::error!(
+                        message_id = %message.source.message_id,
+                        credential_id = %message.credential_id,
+                        error = %e,
+                        "Failed to create backend adapter for buffered message"
+                    );
+                    continue;
+                }
+            }
+        } else {
+            // Credential no longer exists, use default target
+            match create_adapter(&config.gateway.default_target) {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::error!(
+                        message_id = %message.source.message_id,
+                        error = %e,
+                        "Failed to create default backend adapter"
+                    );
+                    continue;
+                }
+            }
+        };
+        drop(config);
+
+        match adapter.send_message(&message).await {
+            Ok(()) => {
+                tracing::debug!(
+                    message_id = %message.source.message_id,
+                    "Buffered message delivered"
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    message_id = %message.source.message_id,
+                    error = %e,
+                    "Failed to deliver buffered message"
+                );
+            }
+        }
+    }
+}

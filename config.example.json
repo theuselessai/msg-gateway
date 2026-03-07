@@ -1,0 +1,64 @@
+{
+  "gateway": {
+    "listen": "127.0.0.1:8080",
+    "admin_token": "${GATEWAY_ADMIN_TOKEN}",
+    "adapters_dir": "./adapters",
+    "adapter_port_range": [9000, 9100],
+    "default_target": {
+      "protocol": "pipelit",
+      "inbound_url": "http://localhost:8000/api/v1/inbound",
+      "token": "${PIPELIT_API_TOKEN}"
+    }
+  },
+  "auth": {
+    "send_token": "${GATEWAY_SEND_TOKEN}"
+  },
+  "health_checks": {
+    "pipelit": {
+      "url": "http://localhost:8000/health",
+      "interval_seconds": 30,
+      "alert_after_failures": 3,
+      "notify_credentials": ["yao_telegram"]
+    }
+  },
+  "credentials": {
+    "generic_chat": {
+      "adapter": "generic",
+      "token": "${GENERIC_CHAT_TOKEN}",
+      "active": true,
+      "emergency": false,
+      "route": {
+        "workflow_id": "wf_local",
+        "trigger_id": "trigger_generic"
+      }
+    },
+    "yao_telegram": {
+      "adapter": "telegram",
+      "token": "${YAO_TELEGRAM_TOKEN}",
+      "active": false,
+      "emergency": true,
+      "config": {
+        "poll_timeout": 30
+      },
+      "route": {
+        "workflow_id": "wf_abc123",
+        "trigger_id": "trigger_telegram_yao"
+      }
+    },
+    "dev_opencode": {
+      "adapter": "generic",
+      "token": "${DEV_OPENCODE_TOKEN}",
+      "active": false,
+      "emergency": false,
+      "target": {
+        "protocol": "opencode",
+        "base_url": "http://localhost:4096",
+        "token": "${OPENCODE_TOKEN}",
+        "poll_interval_ms": 500
+      },
+      "route": {
+        "agent": "coder"
+      }
+    }
+  }
+}

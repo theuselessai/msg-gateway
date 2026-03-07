@@ -1,0 +1,38 @@
+{
+  "gateway": {
+    "listen": "127.0.0.1:8080",
+    "admin_token": "test_admin_token",
+    "adapters_dir": "./adapters",
+    "adapter_port_range": [9000, 9100],
+    "default_target": {
+      "protocol": "pipelit",
+      "inbound_url": "http://localhost:18000/api/v1/inbound",
+      "token": "test_pipelit_token"
+    }
+  },
+  "auth": {
+    "send_token": "test_send_token"
+  },
+  "credentials": {
+    "generic_test": {
+      "adapter": "generic",
+      "token": "test_generic_token",
+      "active": true,
+      "emergency": false,
+      "route": {
+        "workflow_id": "wf_test",
+        "trigger_id": "trigger_test"
+      }
+    },
+    "telegram_test": {
+      "adapter": "telegram",
+      "token": "fake_bot_token_for_testing",
+      "active": true,
+      "emergency": false,
+      "route": {
+        "workflow_id": "wf_telegram",
+        "trigger_id": "trigger_telegram"
+      }
+    }
+  }
+}

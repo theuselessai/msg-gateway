@@ -1,0 +1,4 @@
+/target
+config.telegram.json
+__pycache__/
+*.pyc

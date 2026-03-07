@@ -1,0 +1,6 @@
+{
+  "name": "telegram",
+  "version": "0.1.0",
+  "command": "python3",
+  "args": ["main.py"]
+}
