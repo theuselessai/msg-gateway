@@ -1,0 +1,22 @@
+{
+  "name": "msg-gateway-e2e",
+  "version": "1.0.0",
+  "description": "E2E tests for msg-gateway using Cucumber-JS",
+  "private": true,
+  "scripts": {
+    "test": "cucumber-js --tags '@smoke' --format progress --format html:reports/cucumber.html",
+    "test:all": "cucumber-js --format progress",
+    "test:report": "cucumber-js --format html:reports/cucumber.html"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@cucumber/cucumber": "^10.8.0",
+    "@types/chai": "^4.3.16",
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.10",
+    "chai": "^4.4.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5",
+    "ws": "^8.17.1"
+  }
+}

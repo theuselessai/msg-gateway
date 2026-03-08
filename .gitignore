@@ -3,3 +3,6 @@ config.json
 config.telegram.json
 __pycache__/
 *.pyc
+e2e/node_modules/
+e2e/reports/
+e2e/dist/
