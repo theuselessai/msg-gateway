@@ -132,6 +132,18 @@ cargo clippy -- -D warnings
 cargo fmt
 ```
 
+## Contributing
+
+Contributions are welcome! Please read [CLAUDE.md](CLAUDE.md) for development guidelines.
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+All PRs must pass CI checks (lint, test, build) and AI code review.
+
 ## License
 
-Apache 2.0
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
