@@ -911,9 +911,7 @@ async fn spawn_file_server(
 ) -> (u16, tokio::task::JoinHandle<()>) {
     use axum::routing::get;
     let app = axum::Router::new().route(path, get(move || async move { content }));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let handle = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -927,9 +925,7 @@ async fn spawn_file_server(
 async fn spawn_mock_backend() -> (u16, tokio::sync::oneshot::Receiver<serde_json::Value>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let (tx, rx) = tokio::sync::oneshot::channel();
 
@@ -970,7 +966,8 @@ async fn spawn_mock_backend() -> (u16, tokio::sync::oneshot::Receiver<serde_json
             };
 
             // Send HTTP 200 response
-            let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\n\r\nok";
+            let response =
+                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\n\r\nok";
             let _ = stream.write_all(response).await;
 
             let _ = tx.send(body_json);
@@ -982,17 +979,16 @@ async fn spawn_mock_backend() -> (u16, tokio::sync::oneshot::Receiver<serde_json
 }
 
 fn find_header_end(buf: &[u8]) -> Option<usize> {
-    buf.windows(4)
-        .position(|w| w == b"\r\n\r\n")
+    buf.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
 fn parse_content_length(headers: &str) -> usize {
     for line in headers.lines() {
         let lower = line.to_lowercase();
-        if lower.starts_with("content-length:") {
-            if let Some(val) = lower.split(':').nth(1) {
-                return val.trim().parse().unwrap_or(0);
-            }
+        if lower.starts_with("content-length:")
+            && let Some(val) = lower.split(':').nth(1)
+        {
+            return val.trim().parse().unwrap_or(0);
         }
     }
     0
@@ -1177,7 +1173,11 @@ async fn test_generic_inbound_with_file_no_cache() {
     let is_empty = attachments
         .map(|a| a.as_array().map(|arr| arr.is_empty()).unwrap_or(true))
         .unwrap_or(true);
-    assert!(is_empty, "Expected empty or absent attachments, got: {:?}", attachments);
+    assert!(
+        is_empty,
+        "Expected empty or absent attachments, got: {:?}",
+        attachments
+    );
 }
 
 /// Test 4: Send to generic adapter with file_ids — WebSocket client receives file_urls.
@@ -1220,10 +1220,7 @@ async fn test_send_to_generic_with_file_ids_includes_file_urls() {
     let expected_download_url = upload_body["download_url"].as_str().unwrap().to_string();
 
     // Step 2: Connect a WebSocket to the generic adapter chat
-    let ws_url = format!(
-        "ws://127.0.0.1:{}/ws/chat/test_generic/chat1",
-        server.port
-    );
+    let ws_url = format!("ws://127.0.0.1:{}/ws/chat/test_generic/chat1", server.port);
     let request = http::Request::builder()
         .uri(&ws_url)
         .header("Authorization", "Bearer generic_token")
@@ -1235,7 +1232,9 @@ async fn test_send_to_generic_with_file_ids_includes_file_urls() {
         .body(())
         .unwrap();
 
-    let (ws_stream, _) = connect_async(request).await.expect("WebSocket connect failed");
+    let (ws_stream, _) = connect_async(request)
+        .await
+        .expect("WebSocket connect failed");
     let (_write, mut read) = ws_stream.split();
 
     // Give the WS connection time to register in the registry
@@ -1255,7 +1254,11 @@ async fn test_send_to_generic_with_file_ids_includes_file_urls() {
         .await
         .unwrap();
 
-    assert!(send_resp.status().is_success(), "Send failed: {:?}", send_resp.status());
+    assert!(
+        send_resp.status().is_success(),
+        "Send failed: {:?}",
+        send_resp.status()
+    );
 
     // Step 4: Assert WebSocket receives a message with file_urls containing the download URL
     let ws_msg = tokio::time::timeout(std::time::Duration::from_secs(5), async {
