@@ -6,3 +6,5 @@ __pycache__/
 e2e/node_modules/
 e2e/reports/
 e2e/dist/
+adapters/telegram/node_modules/
+adapters/telegram/dist/
