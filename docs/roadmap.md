@@ -31,7 +31,7 @@ msg-gateway is the unified messaging layer for Pipelit and other LLM-based appli
 |-------|-------|------|----------|----------|------------|--------|
 | 1 | #15 | Message Format Redesign (core fields, files[], extra_data) | P0 | 2-3 days | — | ✅ Done |
 | 2 | #16 | File Upload API (POST /api/v1/files) | P0 | 1-2 days | #15 | ✅ Done |
-| 3 | #12 | E2E Test Framework (Cucumber-JS) | P0 | 3-4 days | #15 | Planned |
+| 3 | #12 | E2E Test Framework (Cucumber-JS) | P0 | 3-4 days | #15 | ✅ Done |
 | 4 | #13 | Telegram Adapter → Node.js | P0 | 2-3 days | #15, #12 | Planned |
 | 5 | #17 | Generic Adapter File Support | P1 | 1-2 days | #15, #16 | Planned |
 | 6 | #11 | Email Adapter (Node.js) | P1 | 5-7 days | #15, #12 | Planned |
