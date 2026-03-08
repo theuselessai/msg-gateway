@@ -39,10 +39,6 @@ export class TestWorld extends World {
       return Promise.resolve(this.wsMessages.shift());
     }
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`WS message not received within ${timeoutMs}ms`)),
-        timeoutMs
-      );
       const handler = (data: WebSocket.RawData) => {
         clearTimeout(timer);
         this.wsClient!.off('message', handler);
@@ -52,6 +48,10 @@ export class TestWorld extends World {
           reject(err);
         }
       };
+      const timer = setTimeout(() => {
+        this.wsClient!.off('message', handler);
+        reject(new Error(`WS message not received within ${timeoutMs}ms`));
+      }, timeoutMs);
       this.wsClient!.on('message', handler);
     });
   }
