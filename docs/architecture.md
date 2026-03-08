@@ -2,210 +2,375 @@
 
 ## Overview
 
-msg-gateway is a message routing service that connects user-facing communication protocols to backend AI/LLM services.
+msg-gateway is a protocol bridge that connects user-facing communication platforms to backend AI/LLM services. User-facing adapters run as external subprocesses (except the built-in Generic adapter). Backend adapters are built into the gateway. The gateway normalizes messages between both sides.
+
+## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           msg-gateway                                    │
-│                                                                          │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────────────────┐   │
-│  │   Adapters   │    │    Core      │    │      Backends            │   │
-│  │              │    │              │    │                          │   │
-│  │  Telegram ───┼───▶│  Router      │───▶│  Pipelit (webhook)       │   │
-│  │  Discord  ───┼───▶│  Health Mon  │───▶│  OpenCode (REST+SSE)     │   │
-│  │  Slack    ───┼───▶│  File Cache  │    │                          │   │
-│  │  Email    ───┼───▶│  Config      │    │                          │   │
-│  │  Generic  ───┼───▶│              │    │                          │   │
-│  └──────────────┘    └──────────────┘    └──────────────────────────┘   │
-│         ▲                   │                        │                   │
-│         │                   │                        │                   │
-│         └───────────────────┴────────────────────────┘                   │
-│                        /api/v1/send                                      │
-└─────────────────────────────────────────────────────────────────────────┘
+                          ┌─────────────────────────────────────────────────────────────┐
+                          │                      msg-gateway (Rust / Axum)              │
+                          │                                                             │
+  External Adapters       │  ┌───────────────────────────────────────────────────────┐  │     Backend Services
+  (subprocesses)          │  │                    HTTP Server                        │  │
+                          │  │                                                       │  │
+┌──────────────────┐      │  │  POST /api/v1/adapter/inbound   (adapter → gateway)  │  │
+│ Telegram Adapter │─────▶│  │  POST /api/v1/send              (backend → gateway)  │  │
+│ (Node.js)        │◀─────│  │  POST /api/v1/files             (file upload)        │  │
+│ port 9001        │      │  │  GET  /files/{id}               (file download)      │  │
+└──────────────────┘      │  │  POST /api/v1/chat/{cred}       (generic inbound)    │  │
+                          │  │  WS   /ws/chat/{cred}/{chat}    (generic outbound)   │  │   ┌──────────────────┐
+┌──────────────────┐      │  │  GET  /health                   (health check)       │  │   │    Pipelit       │
+│ Discord Adapter  │─────▶│  │  CRUD /admin/credentials/*      (admin API)          │  ├──▶│    (webhook)     │
+│ (Node.js)        │◀─────│  │                                                       │  │   │                  │
+│ port 9002        │      │  └───────────────────────────────────────────────────────┘  │   │ POST inbound_url │
+└──────────────────┘      │                                                             │   └──────────────────┘
+                          │  ┌─────────────┐ ┌─────────────┐ ┌───────────────────────┐  │
+┌──────────────────┐      │  │ Adapter     │ │ Config      │ │ Health Monitor        │  │   ┌──────────────────┐
+│ Slack Adapter    │─────▶│  │ Manager     │ │ Watcher     │ │                       │  ├──▶│    OpenCode      │
+│ (Node.js)        │◀─────│  │             │ │ (fsnotify)  │ │ state: HealthState    │  │   │    (REST+SSE)    │
+│ port 9003        │      │  │ spawn/stop/ │ │             │ │ buffer: VecDeque      │  │   │                  │
+└──────────────────┘      │  │ health check│ │ hot reload  │ │ emergency alerts      │  │   │ POST /conversation│
+                          │  └─────────────┘ └─────────────┘ └───────────────────────┘  │   └──────────────────┘
+┌──────────────────┐      │                                                             │
+│ Email Adapter    │─────▶│  ┌─────────────┐ ┌─────────────┐ ┌───────────────────────┐  │
+│ (Node.js)        │◀─────│  │ Credential  │ │ File Cache  │ │ Generic Adapter       │  │
+│ port 9004        │      │  │ Manager     │ │             │ │ (built-in)            │  │
+└──────────────────┘      │  │             │ │ download/   │ │                       │  │
+                          │  │ registry of │ │ store/serve │ │ REST inbound          │  │
+                          │  │ instances   │ │ cleanup/TTL │ │ WebSocket outbound    │  │
+                          │  └─────────────┘ └─────────────┘ └───────────────────────┘  │
+                          │                                                             │
+                          └─────────────────────────────────────────────────────────────┘
+```
+
+## Domain Model
+
+### Core Entities
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                                    AppState                                         │
+│                              (shared across all routes)                              │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                     │
+│  ┌──────────────────────────┐    ┌──────────────────────────────────────────────┐   │
+│  │         Config           │    │          AdapterInstanceManager              │   │
+│  ├──────────────────────────┤    ├──────────────────────────────────────────────┤   │
+│  │ gateway: GatewayConfig   │    │ adapters: Map<name, AdapterDef>             │   │
+│  │   listen: String         │    │ processes: Map<cred_id, AdapterProcess>     │   │
+│  │   admin_token: String    │    │ port_allocator: PortAllocator              │   │
+│  │   adapters_dir: String   │    │ gateway_url: String                        │   │
+│  │   adapter_port_range     │    └──────────────────────────────────────────────┘   │
+│  │   default_target ────────┼──┐                                                   │
+│  │   file_cache: Option ────┼──┼──┐  ┌──────────────────────────────────────────┐  │
+│  │ auth: AuthConfig         │  │  │  │        CredentialManager                 │  │
+│  │   send_token: String     │  │  │  ├──────────────────────────────────────────┤  │
+│  │ health_checks: Map       │  │  │  │ registry: TaskRegistry                  │  │
+│  │ credentials: Map ────────┼┐ │  │  │   instances: Map<cred_id, InstanceInfo> │  │
+│  └──────────────────────────┘│ │  │  └──────────────────────────────────────────┘  │
+│                              │ │  │                                                 │
+│  ┌───────────────────────┐   │ │  │  ┌───────────────────────────────────────────┐  │
+│  │  CredentialConfig     │◀──┘ │  │  │         HealthMonitor                    │  │
+│  ├───────────────────────┤     │  │  ├───────────────────────────────────────────┤  │
+│  │ adapter: String       │     │  │  │ state: HealthState                       │  │
+│  │ token: String         │     │  │  │   Healthy | Degraded | Down | Recovering │  │
+│  │ active: bool          │     │  │  │ failure_count: u32                       │  │
+│  │ emergency: bool       │     │  │  │ buffer: VecDeque<InboundMessage>         │  │
+│  │ config: Option<JSON>  │     │  │  │ max_buffer_size: usize                  │  │
+│  │ target: Option ───────┼──┐  │  │  └───────────────────────────────────────────┘  │
+│  │ route: JSON           │  │  │  │                                                 │
+│  └───────────────────────┘  │  │  │  ┌───────────────────────────────────────────┐  │
+│                             │  │  └─▶│           FileCache                      │  │
+│  ┌───────────────────────┐  │  │     ├───────────────────────────────────────────┤  │
+│  │   TargetConfig        │◀─┴──┘     │ config: FileCacheConfig                  │  │
+│  ├───────────────────────┤           │ files: Map<file_id, CachedFile>          │  │
+│  │ protocol:             │           │ base_url: String                         │  │
+│  │   Pipelit | Opencode  │           └───────────────────────────────────────────┘  │
+│  │ inbound_url: Option   │                                                         │
+│  │ base_url: Option      │     ┌─────────────────────────────────────────────────┐  │
+│  │ token: String         │     │           WsRegistry                            │  │
+│  │ poll_interval_ms: Opt │     │  Map<(cred_id, chat_id), broadcast::Sender>     │  │
+│  └───────────────────────┘     └─────────────────────────────────────────────────┘  │
+│                                                                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Message Types
+
+```
+  Inbound (User → Gateway → Backend)          Outbound (Backend → Gateway → User)
+  ────────────────────────────────────         ────────────────────────────────────
+
+  ┌───────────────────────────┐               ┌───────────────────────────┐
+  │     InboundMessage        │               │     OutboundMessage       │
+  ├───────────────────────────┤               ├───────────────────────────┤
+  │ route: JSON               │               │ credential_id: String     │
+  │ credential_id: String     │               │ chat_id: String           │
+  │ source ───────────────────┼──┐            │ reply_to_message_id: Opt  │
+  │ text: String              │  │            │ text: String              │
+  │ attachments: Vec ─────────┼──┼──┐         │ file_ids: Vec<String>  *  │
+  │ timestamp: DateTime       │  │  │         │ extra_data: JSON       *  │
+  └───────────────────────────┘  │  │         └───────────────────────────┘
+                                 │  │                     │
+  ┌───────────────────────────┐  │  │                     │ resolved by gateway
+  │     MessageSource         │◀─┘  │                     ▼
+  ├───────────────────────────┤     │         ┌───────────────────────────┐
+  │ protocol: String          │     │         │   AdapterSendRequest      │
+  │ chat_id: String           │     │         ├───────────────────────────┤
+  │ message_id: String        │     │         │ chat_id: String           │
+  │ from ─────────────────────┼──┐  │         │ text: String              │
+  └───────────────────────────┘  │  │         │ reply_to_message_id: Opt  │
+                                 │  │         │ file_paths: Vec<String> * │
+  ┌───────────────────────────┐  │  │         │ extra_data: JSON        * │
+  │       UserInfo            │◀─┘  │         └───────────────────────────┘
+  ├───────────────────────────┤     │
+  │ id: String                │     │         ┌───────────────────────────┐
+  │ username: Option          │     │         │   WsOutboundMessage       │
+  │ display_name: Option      │     │         ├───────────────────────────┤
+  └───────────────────────────┘     │         │ text: String              │
+                                    │         │ timestamp: DateTime       │
+  ┌───────────────────────────┐     │         │ message_id: String        │
+  │      Attachment           │◀────┘         └───────────────────────────┘
+  ├───────────────────────────┤
+  │ filename: String          │                * = v0.2.0 additions
+  │ mime_type: String         │
+  │ size_bytes: u64           │
+  │ download_url: String      │
+  └───────────────────────────┘
+```
+
+### Adapter Process Model
+
+```
+  ┌───────────────────────────┐         ┌───────────────────────────┐
+  │      AdapterDef           │         │     AdapterProcess        │
+  │    (from adapter.json)    │         │   (running instance)      │
+  ├───────────────────────────┤         ├───────────────────────────┤
+  │ name: String              │    ┌───▶│ instance_id: String       │
+  │ version: String           │    │    │ credential_id: String     │
+  │ command: String           │    │    │ adapter_name: String      │
+  │ args: Vec<String>         │    │    │ port: u16                 │
+  └───────────────────────────┘    │    │ process: Child            │
+           │                       │    │ health: AdapterHealth     │
+           │ spawns                │    │   Starting | Healthy      │
+           ▼                       │    │   Unhealthy | Dead        │
+  ┌───────────────────────────┐    │    │ consecutive_failures: u32 │
+  │ AdapterInstanceManager    │    │    │ restart_count: u32        │
+  ├───────────────────────────┤    │    │ token: String             │
+  │ adapters: Map<name, Def>  │    │    │ config: Option<JSON>      │
+  │ processes: Map<cred, Proc>│────┘    └───────────────────────────┘
+  │ port_allocator ───────────┼──┐
+  │ gateway_url: String       │  │      ┌───────────────────────────┐
+  └───────────────────────────┘  │      │     PortAllocator         │
+                                 └─────▶├───────────────────────────┤
+                                        │ range_start: u16          │
+                                        │ range_end: u16            │
+                                        │ allocated: Vec<u16>       │
+                                        └───────────────────────────┘
+```
+
+### Backend Adapter Trait
+
+```
+                          ┌──────────────────────────────────┐
+                          │     BackendAdapter (trait)        │
+                          ├──────────────────────────────────┤
+                          │ send_message(&InboundMessage)    │
+                          │ supports_files() -> bool         │
+                          └──────────┬───────────────────────┘
+                                     │
+                       ┌─────────────┴─────────────┐
+                       │                           │
+          ┌────────────────────────┐   ┌────────────────────────┐
+          │   PipelitAdapter      │   │   OpencodeAdapter      │
+          ├────────────────────────┤   ├────────────────────────┤
+          │ client: reqwest        │   │ client: reqwest        │
+          │ inbound_url: String    │   │ base_url: String       │
+          │ token: String          │   │ token: String          │
+          │                        │   │ poll_interval_ms: u64  │
+          │ supports_files = true  │   │ supports_files = false │
+          └────────────────────────┘   └────────────────────────┘
+```
+
+### Error Hierarchy
+
+```
+  HTTP Layer                              Backend Layer
+
+  ┌──────────────────────────┐            ┌──────────────────────────┐
+  │       AppError           │            │      BackendError        │
+  ├──────────────────────────┤            ├──────────────────────────┤
+  │ Config(String)      500  │            │ Network(reqwest)         │
+  │ Unauthorized        401  │            │ BackendResponse{status}  │
+  │ CredentialNotFound  404  │            │ InvalidConfig(String)    │
+  │ CredentialInactive  400  │            │ Timeout                  │
+  │ NotFound(String)    404  │            └──────────────────────────┘
+  │ Gone(String)        410  │
+  │ Internal(String)    500  │
+  └──────────────────────────┘
+```
+
+## Message Flow
+
+### Inbound: User → Backend
+
+```
+  User                 Adapter              Gateway                    Backend
+   │                    │                     │                          │
+   │  send message      │                     │                          │
+   ├───────────────────▶│                     │                          │
+   │                    │  POST /api/v1/      │                          │
+   │                    │  adapter/inbound    │                          │
+   │                    ├────────────────────▶│                          │
+   │                    │                     │  validate instance_id    │
+   │                    │                     │  lookup credential       │
+   │                    │                     │  resolve target          │
+   │                    │                     │                          │
+   │                    │                     │  [if files present]      │
+   │                    │                     │  download & cache files  │
+   │                    │                     │                          │
+   │                    │                     │  normalize to            │
+   │                    │                     │  InboundMessage          │
+   │                    │                     │                          │
+   │                    │                     │  [if backend healthy]    │
+   │                    │                     │  POST inbound_url ──────▶│
+   │                    │                     │                          │
+   │                    │                     │  [if backend down]       │
+   │                    │                     │  buffer message          │
+   │                    │                     │  [if emergency cred]     │
+   │                    │                     │  send alert to user      │
+   │                    │                     │                          │
+   │                    │    202 Accepted     │                          │
+   │                    │◀───────────────────┤                          │
+   │                    │                     │                          │
+```
+
+### Outbound: Backend → User
+
+```
+  Backend              Gateway                    Adapter              User
+   │                    │                          │                    │
+   │  POST /api/v1/send │                          │                    │
+   ├───────────────────▶│                          │                    │
+   │                    │  validate send_token     │                    │
+   │                    │  lookup credential       │                    │
+   │                    │                          │                    │
+   │                    │  [if file_ids present]   │                    │
+   │                    │  resolve to file_paths   │                    │
+   │                    │                          │                    │
+   │                    │  [if generic adapter]    │                    │
+   │                    │  send via WebSocket ─────┼───────────────────▶│
+   │                    │                          │                    │
+   │                    │  [if external adapter]   │                    │
+   │                    │  POST /send ────────────▶│                    │
+   │                    │                          │  send via platform │
+   │                    │                          ├───────────────────▶│
+   │                    │                          │                    │
+   │                    │  protocol_message_id     │                    │
+   │                    │◀─────────────────────────┤                    │
+   │  SendResponse      │                          │                    │
+   │◀───────────────────┤                          │                    │
+   │                    │                          │                    │
+```
+
+### File Upload Flow (Backend → User with files)
+
+```
+  Backend              Gateway                    Adapter              User
+   │                    │                          │                    │
+   │  POST /api/v1/files│                          │                    │
+   │  (multipart)       │                          │                    │
+   ├───────────────────▶│                          │                    │
+   │                    │  validate token          │                    │
+   │                    │  validate mime/size      │                    │
+   │                    │  store in FileCache      │                    │
+   │  {file_id: "f_.."}│                          │                    │
+   │◀───────────────────┤                          │                    │
+   │                    │                          │                    │
+   │  POST /api/v1/send │                          │                    │
+   │  {file_ids:[..]}   │                          │                    │
+   ├───────────────────▶│                          │                    │
+   │                    │  resolve file_ids →      │                    │
+   │                    │  file_paths              │                    │
+   │                    │  POST /send              │                    │
+   │                    │  {file_paths:[..]} ─────▶│                    │
+   │                    │                          │  upload to platform│
+   │                    │                          ├───────────────────▶│
+   │                    │                          │                    │
+```
+
+### Config Hot Reload
+
+```
+  Filesystem            Config Watcher           Gateway
+   │                       │                      │
+   │  config.json modified │                      │
+   ├──────────────────────▶│                      │
+   │                       │  debounce (1s)       │
+   │                       │  parse new config    │
+   │                       │  diff credentials    │
+   │                       │                      │
+   │                       │  [added credentials] │
+   │                       │  spawn adapters ─────▶│
+   │                       │                      │
+   │                       │  [removed creds]     │
+   │                       │  stop adapters ──────▶│
+   │                       │                      │
+   │                       │  [changed creds]     │
+   │                       │  restart adapters ───▶│
+   │                       │                      │
+   │                       │  update config ──────▶│
+   │                       │                      │
 ```
 
 ## Components
 
 ### Core Gateway (Rust)
 
-The gateway core is written in Rust using the Axum web framework.
-
 | Component | File | Purpose |
 |-----------|------|---------|
 | HTTP Server | `src/server.rs` | Routes, middleware, state management |
 | Config | `src/config.rs` | Configuration loading, env var resolution |
-| Router | `src/server.rs` | Message routing to backends |
+| Messages | `src/message.rs` | Normalized message types |
 | Health Monitor | `src/health.rs` | Backend health checks, message buffering |
 | File Cache | `src/files.rs` | Attachment download/upload caching |
 | Admin API | `src/admin.rs` | Credential CRUD operations |
 | Adapter Manager | `src/adapter.rs` | External adapter process lifecycle |
 | Credential Manager | `src/manager.rs` | Credential task registry |
 | Config Watcher | `src/watcher.rs` | Hot reload on config changes |
+| Backend Adapters | `src/backend.rs` | Pipelit and OpenCode protocol adapters |
+| Generic Adapter | `src/generic.rs` | Built-in REST + WebSocket adapter |
+| Errors | `src/error.rs` | Error types and HTTP status mapping |
 
 ### Adapters
 
-Adapters translate between protocol-specific formats and the gateway's normalized message format.
+1. **Built-in**: Generic adapter (REST inbound + WebSocket outbound), runs in-process
+2. **External**: Telegram, Discord, Slack, Email — separate Node.js processes managed by gateway
 
-#### Types
-
-1. **Built-in Adapters**: Run in the gateway process
-   - Generic (REST + WebSocket)
-
-2. **External Adapters**: Run as separate processes
-   - Telegram, Discord, Slack, Email
-   - Managed by `AdapterInstanceManager`
-   - Communicate via HTTP
-
-#### External Adapter Lifecycle
-
-```
-1. Gateway starts
-2. For each active credential:
-   a. Find adapter definition in adapters_dir
-   b. Allocate port from adapter_port_range
-   c. Spawn subprocess with environment:
-      - INSTANCE_ID
-      - ADAPTER_PORT
-      - GATEWAY_URL
-      - CREDENTIAL_TOKEN
-      - CREDENTIAL_CONFIG
-   d. Wait for health check to pass
-   e. Register in process map
-3. On config change:
-   a. Detect added/removed/changed credentials
-   b. Stop removed adapters
-   c. Start new adapters
-   d. Restart changed adapters
-```
+External adapters communicate with the gateway via:
+- `POST /send` — gateway tells adapter to send a message
+- `GET /health` — gateway checks adapter health
+- `POST /api/v1/adapter/inbound` — adapter forwards inbound messages to gateway
 
 ### Backends
 
-Backends receive normalized messages and send replies.
-
-#### Pipelit Protocol
-```
-Inbound:  POST {inbound_url} with InboundMessage
-Outbound: POST /api/v1/send from Pipelit to gateway
-```
-
-#### OpenCode Protocol
-```
-Inbound:  POST {base_url}/conversation with message
-Outbound: SSE polling for responses
-```
-
-## Data Flow
-
-### Inbound Message (User → Backend)
-
-```
-1. User sends message via protocol (e.g., Telegram)
-2. External adapter receives message
-3. Adapter POSTs to gateway /api/v1/adapter/inbound
-4. Gateway normalizes message to InboundMessage format
-5. Gateway checks health state:
-   - If backend down: buffer message
-   - If backend up: forward to backend
-6. Gateway returns acknowledgment to adapter
-```
-
-### Outbound Message (Backend → User)
-
-```
-1. Backend POSTs to gateway /api/v1/send
-2. Gateway validates auth token
-3. Gateway looks up credential
-4. For generic adapter:
-   - Send via WebSocket to connected clients
-5. For external adapter:
-   - POST to adapter's /send endpoint
-6. Adapter sends to user via protocol
-7. Gateway returns protocol_message_id
-```
-
-## Message Format
-
-### InboundMessage (Normalized)
-
-```json
-{
-  "route": { ... },
-  "credential_id": "my_telegram",
-  "source": {
-    "protocol": "telegram",
-    "chat_id": "123456789",
-    "message_id": "msg_001",
-    "from": {
-      "id": "user_123",
-      "username": "johndoe",
-      "display_name": "John Doe"
-    }
-  },
-  "text": "Hello, assistant!",
-  "attachments": [
-    {
-      "filename": "image.png",
-      "mime_type": "image/png",
-      "size_bytes": 12345,
-      "download_url": "http://gateway/files/f_abc123"
-    }
-  ],
-  "timestamp": "2026-03-08T12:00:00Z"
-}
-```
-
-### Outbound Message (Send Request)
-
-```json
-{
-  "credential_id": "my_telegram",
-  "chat_id": "123456789",
-  "text": "Hello, user!",
-  "reply_to_message_id": "msg_001",
-  "file": {
-    "url": "http://backend/files/response.pdf",
-    "filename": "response.pdf",
-    "mime_type": "application/pdf"
-  }
-}
-```
-
-## Configuration
-
-See [config.example.json](../config.example.json) for a full example.
-
-### Key Sections
-
-```json
-{
-  "gateway": {
-    "listen": "0.0.0.0:8080",
-    "admin_token": "${ADMIN_TOKEN}",
-    "adapters_dir": "./adapters",
-    "adapter_port_range": [9000, 9100],
-    "default_target": { ... },
-    "file_cache": { ... },
-    "health_checks": { ... }
-  },
-  "auth": {
-    "send_token": "${SEND_TOKEN}"
-  },
-  "credentials": {
-    "credential_id": { ... }
-  }
-}
-```
+| Backend | Protocol | Inbound | Outbound |
+|---------|----------|---------|----------|
+| Pipelit | Webhook + callback | `POST {inbound_url}` with `InboundMessage` | `POST /api/v1/send` from backend |
+| OpenCode | REST + SSE | `POST {base_url}/conversation` | SSE polling for responses |
 
 ## Security
 
 - Admin API requires `admin_token` in Authorization header
 - Send API requires `send_token` in Authorization header
 - Credential tokens are never exposed in API responses
-- Environment variable references (`${VAR}`) resolved at load time
-- File cache validates MIME types and size limits
+- Environment variable references (`${VAR}`) resolved at config load time
+- File cache validates MIME types and enforces size limits
+- File IDs are unguessable UUIDs
 
 ## See Also
 
-- [Adapter Protocol](adapters/protocol.md)
-- [E2E Testing Guide](testing/e2e.md)
-- [Roadmap](roadmap.md)
+- [Adapter Protocol](adapters/protocol.md) — External adapter HTTP protocol spec
+- [File Upload API](api/files.md) — File upload/download endpoints
+- [E2E Testing Guide](testing/e2e.md) — End-to-end test framework
+- [Roadmap](roadmap.md) — Release plans
