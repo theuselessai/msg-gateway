@@ -64,7 +64,7 @@ Mirror the Telegram adapter's flat structure. Email's implementation is longer d
 - `nodemailer`: Standard SMTP client. Well-typed via `@types/nodemailer`.
 - `mailparser`: Parses raw MIME email into structured objects (headers, text, html, attachments). Handles encoding, multipart, etc.
 
-Requires Node.js 18+; enforce `"node": ">=20"` to match the Telegram adapter.
+Requires Node.js 20+; enforce `"node": ">=20"` to match the Telegram adapter.
 
 ## Credential Config
 
@@ -235,6 +235,9 @@ async function processEmail(rawSource: Buffer, uid: number): Promise<void> {
   }
 
   // Determine if this email was CC'd or BCC'd to us
+  // Note: BCC cannot be reliably detected — mail servers strip BCC headers before delivery.
+  // The isBcc heuristic below (not in To, not in CC) is a best-effort guess; it also matches
+  // mailing list delivery and other cases where the recipient isn't explicitly listed.
   const ourAddress = config.imap.auth.user.toLowerCase();
   const toAddresses = (parsed.to?.value ?? []).map(a => a.address?.toLowerCase());
   const ccAddresses = (parsed.cc?.value ?? []).map(a => a.address?.toLowerCase());
