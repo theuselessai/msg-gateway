@@ -89,7 +89,9 @@ pub async fn create_server(
         .route("/api/v1/send", post(send_message))
         // Adapter inbound endpoint (from external adapters)
         .route("/api/v1/adapter/inbound", post(adapter_inbound))
-        // File serving endpoint (requires send_token)
+        // File upload endpoint (requires send_token)
+        .route("/api/v1/files", post(upload_file))
+        // File serving endpoint (no auth — file IDs are unguessable UUIDs)
         .route("/files/{file_id}", get(serve_file))
         // Generic protocol endpoints
         .route("/api/v1/chat/{credential_id}", post(generic::chat_inbound))
@@ -272,21 +274,7 @@ async fn send_message(
 ) -> Result<impl IntoResponse, AppError> {
     // Verify send token
     let config = state.config.read().await;
-    let expected_token = &config.auth.send_token;
-
-    let auth_header = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
-
-    match auth_header {
-        Some(auth) if auth.starts_with("Bearer ") => {
-            let token = &auth[7..];
-            if token != expected_token {
-                return Err(AppError::Unauthorized);
-            }
-        }
-        _ => return Err(AppError::Unauthorized),
-    }
+    verify_send_token(&headers, &config.auth.send_token)?;
 
     // Extract fields from payload
     let credential_id = payload
@@ -658,16 +646,11 @@ async fn adapter_inbound(
     ))
 }
 
-// Serve cached files
-async fn serve_file(
-    State(state): State<Arc<AppState>>,
-    axum::extract::Path(file_id): axum::extract::Path<String>,
-    headers: axum::http::HeaderMap,
-) -> Result<impl IntoResponse, AppError> {
-    // Verify send token (same as /api/v1/send)
-    let config = state.config.read().await;
-    let expected_token = &config.auth.send_token;
-
+/// Helper to verify send_token from Authorization header
+fn verify_send_token(
+    headers: &axum::http::HeaderMap,
+    expected_token: &str,
+) -> Result<(), AppError> {
     let auth_header = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
@@ -681,8 +664,121 @@ async fn serve_file(
         }
         _ => return Err(AppError::Unauthorized),
     }
+    Ok(())
+}
+
+// Upload file endpoint (POST /api/v1/files)
+async fn upload_file(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    mut multipart: axum::extract::Multipart,
+) -> Result<impl IntoResponse, AppError> {
+    // Verify send token
+    let config = state.config.read().await;
+    verify_send_token(&headers, &config.auth.send_token)?;
     drop(config);
 
+    // Get file cache
+    let file_cache = state
+        .file_cache
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("File cache not configured".to_string()))?;
+
+    // Parse multipart fields
+    let mut file_data: Option<Vec<u8>> = None;
+    let mut filename: Option<String> = None;
+    let mut mime_type: Option<String> = None;
+    let mut multipart_filename: Option<String> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("Failed to read multipart field: {}", e)))?
+    {
+        let field_name = field.name().unwrap_or("").to_string();
+
+        match field_name.as_str() {
+            "file" => {
+                // Capture filename from multipart Content-Disposition if available
+                if let Some(fname) = field.file_name() {
+                    multipart_filename = Some(fname.to_string());
+                }
+                let bytes = field.bytes().await.map_err(|e| {
+                    AppError::BadRequest(format!("Failed to read file data: {}", e))
+                })?;
+                file_data = Some(bytes.to_vec());
+            }
+            "filename" => {
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("Failed to read filename: {}", e)))?;
+                filename = Some(text);
+            }
+            "mime_type" => {
+                let text = field.text().await.map_err(|e| {
+                    AppError::BadRequest(format!("Failed to read mime_type: {}", e))
+                })?;
+                mime_type = Some(text);
+            }
+            _ => {
+                // Skip unknown fields
+            }
+        }
+    }
+
+    // Validate required fields
+    let data = file_data.ok_or_else(|| AppError::BadRequest("Missing 'file' field".to_string()))?;
+
+    if data.is_empty() {
+        return Err(AppError::BadRequest("File data is empty".to_string()));
+    }
+
+    // Use explicit filename, fall back to multipart filename
+    let filename = filename
+        .or(multipart_filename)
+        .ok_or_else(|| AppError::BadRequest("Missing 'filename' field".to_string()))?;
+
+    let mime_type = mime_type.unwrap_or_else(|| "application/octet-stream".to_string());
+
+    // Store file — map errors to proper HTTP status codes
+    let cached = file_cache
+        .store_file(data, &filename, &mime_type)
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("too large") {
+                AppError::PayloadTooLarge(msg)
+            } else if msg.contains("MIME type") {
+                AppError::UnsupportedMediaType(msg)
+            } else {
+                e
+            }
+        })?;
+
+    let download_url = file_cache.get_download_url(&cached.file_id);
+
+    tracing::info!(
+        file_id = %cached.file_id,
+        filename = %cached.filename,
+        size = cached.size_bytes,
+        "File uploaded via API"
+    );
+
+    Ok(Json(json!({
+        "file_id": cached.file_id,
+        "filename": cached.filename,
+        "mime_type": cached.mime_type,
+        "size_bytes": cached.size_bytes,
+        "download_url": download_url
+    })))
+}
+
+// Serve cached files (no auth — file IDs are unguessable UUIDs)
+async fn serve_file(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(file_id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, AppError> {
     // Get file cache
     let file_cache = state
         .file_cache
