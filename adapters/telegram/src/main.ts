@@ -99,36 +99,36 @@ bot.on("message", async (ctx: Context) => {
     const largest = message.photo.reduce((a, b) =>
       (a.file_size ?? 0) >= (b.file_size ?? 0) ? a : b
     );
-     const url = await resolveFileUrl(largest.file_id);
-     if (url) {
-       files.push({
-         url,
-         filename: `photo_${message.message_id}.jpg`,
-         mime_type: "image/jpeg",
-       });
-     }
+    const url = await resolveFileUrl(largest.file_id);
+    if (url) {
+      files.push({
+        url,
+        filename: `photo_${message.message_id}.jpg`,
+        mime_type: "image/jpeg",
+      });
+    }
     text = message.caption ?? "[Photo]";
   } else if (message.document) {
     const doc = message.document;
-     const url = await resolveFileUrl(doc.file_id);
-     if (url) {
-       files.push({
-         url,
-         filename: doc.file_name ?? `file_${message.message_id}`,
-         mime_type: doc.mime_type ?? "application/octet-stream",
-       });
-     }
+    const url = await resolveFileUrl(doc.file_id);
+    if (url) {
+      files.push({
+        url,
+        filename: doc.file_name ?? `file_${message.message_id}`,
+        mime_type: doc.mime_type ?? "application/octet-stream",
+      });
+    }
     text = message.caption ?? `[Document: ${doc.file_name ?? "file"}]`;
   } else if (message.voice) {
     const voice = message.voice;
-     const url = await resolveFileUrl(voice.file_id);
-     if (url) {
-       files.push({
-         url,
-         filename: `voice_${message.message_id}.ogg`,
-         mime_type: voice.mime_type ?? "audio/ogg",
-       });
-     }
+    const url = await resolveFileUrl(voice.file_id);
+    if (url) {
+      files.push({
+        url,
+        filename: `voice_${message.message_id}.ogg`,
+        mime_type: voice.mime_type ?? "audio/ogg",
+      });
+    }
     text = "[Voice message]";
   } else if (message.text) {
     text = message.text;
@@ -201,48 +201,48 @@ async function sendOutbound(body: SendRequest): Promise<string> {
     ? { message_id: parseInt(replyTo, 10) }
     : undefined;
 
-   let lastMessageId = "";
+  let lastMessageId = "";
 
-   if (filePaths.length === 0) {
-     log(`Sending message to chat ${chatId}: ${text.slice(0, 50)}...`);
-     const sent = await bot.api.sendMessage(chatId, text, {
-       reply_parameters: replyParams,
-     });
-     lastMessageId = String(sent.message_id);
-   } else {
-     for (let i = 0; i < filePaths.length; i++) {
-       const filePath = filePaths[i];
-       try {
-         const ext = path.extname(filePath).toLowerCase();
-         const isImage = IMAGE_EXTENSIONS.has(ext);
-         const caption = i === 0 && text ? text : undefined;
-         const reply = i === 0 ? replyParams : undefined;
+  if (filePaths.length === 0) {
+    log(`Sending message to chat ${chatId}: ${text.slice(0, 50)}...`);
+    const sent = await bot.api.sendMessage(chatId, text, {
+      reply_parameters: replyParams,
+    });
+    lastMessageId = String(sent.message_id);
+  } else {
+    for (let i = 0; i < filePaths.length; i++) {
+      const filePath = filePaths[i];
+      try {
+        const ext = path.extname(filePath).toLowerCase();
+        const isImage = IMAGE_EXTENSIONS.has(ext);
+        const caption = i === 0 && text ? text : undefined;
+        const reply = i === 0 ? replyParams : undefined;
 
-         const fileBuffer = await fs.promises.readFile(filePath);
-         const filename = path.basename(filePath);
-         const inputFile = new InputFile(fileBuffer, filename);
+        const fileBuffer = await fs.promises.readFile(filePath);
+        const filename = path.basename(filePath);
+        const inputFile = new InputFile(fileBuffer, filename);
 
-         if (isImage) {
-           log(`Sending photo to chat ${chatId}: ${filePath}`);
-           const sent = await bot.api.sendPhoto(chatId, inputFile, {
-             caption,
-             reply_parameters: reply,
-           });
-           lastMessageId = String(sent.message_id);
-         } else {
-           log(`Sending document to chat ${chatId}: ${filePath}`);
-           const sent = await bot.api.sendDocument(chatId, inputFile, {
-             caption,
-             reply_parameters: reply,
-           });
-           lastMessageId = String(sent.message_id);
-         }
-       } catch (err) {
-         log(`Failed to send file ${filePath}: ${err}`);
-         continue;
-       }
-     }
-   }
+        if (isImage) {
+          log(`Sending photo to chat ${chatId}: ${filePath}`);
+          const sent = await bot.api.sendPhoto(chatId, inputFile, {
+            caption,
+            reply_parameters: reply,
+          });
+          lastMessageId = String(sent.message_id);
+        } else {
+          log(`Sending document to chat ${chatId}: ${filePath}`);
+          const sent = await bot.api.sendDocument(chatId, inputFile, {
+            caption,
+            reply_parameters: reply,
+          });
+          lastMessageId = String(sent.message_id);
+        }
+      } catch (err) {
+        log(`Failed to send file ${filePath}: ${err}`);
+        continue;
+      }
+    }
+  }
 
   return lastMessageId;
 }
@@ -296,7 +296,7 @@ async function main(): Promise<void> {
     log(`WARNING: Could not verify bot token: ${err}`);
   }
 
-   await app.listen({ port: ADAPTER_PORT, host: process.env.ADAPTER_HOST ?? "0.0.0.0" });
+  await app.listen({ port: ADAPTER_PORT, host: process.env.ADAPTER_HOST ?? "0.0.0.0" });
   log(`HTTP server listening on port ${ADAPTER_PORT}`);
 
   bot.start({
