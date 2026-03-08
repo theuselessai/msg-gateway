@@ -92,6 +92,7 @@ Given(
       const timeoutId = setTimeout(() => {
         ws.off('open', openHandler);
         ws.off('error', errorHandler);
+        ws.terminate();
         reject(new Error('WebSocket connection timed out'));
       }, 5000);
       const openHandler = () => {

@@ -32,6 +32,9 @@ export class TestWorld extends World {
   }
 
   waitForWsMessage(timeoutMs: number): Promise<unknown> {
+    if (!this.wsClient) {
+      throw new Error('WebSocket client not initialized.');
+    }
     if (this.wsMessages.length > 0) {
       return Promise.resolve(this.wsMessages.shift());
     }
