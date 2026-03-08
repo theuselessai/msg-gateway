@@ -76,6 +76,9 @@ async function forwardToGateway(payload: InboundPayload): Promise<void> {
   });
 }
 
+// Note: Telegram Bot API requires the bot token in the file download URL.
+// This is the only way to construct a download URL for Telegram files.
+// The gateway downloads and caches the file immediately, limiting exposure.
 async function resolveFileUrl(fileId: string): Promise<string | null> {
   try {
     const file = await bot.api.getFile(fileId);
@@ -210,13 +213,15 @@ async function sendOutbound(body: SendRequest): Promise<string> {
     });
     lastMessageId = String(sent.message_id);
   } else {
+    let textSent = false;
     for (let i = 0; i < filePaths.length; i++) {
       const filePath = filePaths[i];
+      const isFirstFile = i === 0;
       try {
         const ext = path.extname(filePath).toLowerCase();
         const isImage = IMAGE_EXTENSIONS.has(ext);
-        const caption = i === 0 && text ? text : undefined;
-        const reply = i === 0 ? replyParams : undefined;
+        const caption = isFirstFile && text ? text : undefined;
+        const reply = isFirstFile ? replyParams : undefined;
 
         const fileBuffer = await fs.promises.readFile(filePath);
         const filename = path.basename(filePath);
@@ -237,10 +242,27 @@ async function sendOutbound(body: SendRequest): Promise<string> {
           });
           lastMessageId = String(sent.message_id);
         }
+        if (isFirstFile && caption) textSent = true;
       } catch (err) {
         log(`Failed to send file ${filePath}: ${err}`);
+        // If first file failed and we have text, send text as fallback
+        if (isFirstFile && text && !textSent) {
+          try {
+            log(`Sending text fallback to chat ${chatId}`);
+            const sent = await bot.api.sendMessage(chatId, text, {
+              reply_parameters: replyParams,
+            });
+            lastMessageId = String(sent.message_id);
+            textSent = true;
+          } catch (textErr) {
+            log(`Failed to send text fallback: ${textErr}`);
+          }
+        }
         continue;
       }
+    }
+    if (lastMessageId === "") {
+      throw new Error("Failed to send all files and no message was delivered");
     }
   }
 
