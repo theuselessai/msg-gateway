@@ -7,6 +7,7 @@ export class TestWorld extends World {
   gateway: TestGateway | null = null;
   backend: MockBackend | null = null;
   wsClient: WebSocket | null = null;
+  wsMessages: unknown[] = [];
   lastResponse: Response | null = null;
   lastResponseBody: unknown = null;
   lastBackendMessage: unknown = null;
@@ -17,7 +18,10 @@ export class TestWorld extends World {
   }
 
   async gatewayFetch(path: string, options: RequestInit = {}): Promise<Response> {
-    const url = this.gateway!.gatewayUrl + path;
+    if (!this.gateway) {
+      throw new Error('Gateway not initialized. Call "Given a running gateway" first.');
+    }
+    const url = this.gateway.gatewayUrl + path;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...this.pendingHeaders,
@@ -25,6 +29,28 @@ export class TestWorld extends World {
     };
     this.pendingHeaders = {};
     return fetch(url, { ...options, headers });
+  }
+
+  waitForWsMessage(timeoutMs: number): Promise<unknown> {
+    if (this.wsMessages.length > 0) {
+      return Promise.resolve(this.wsMessages.shift());
+    }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`WS message not received within ${timeoutMs}ms`)),
+        timeoutMs
+      );
+      const handler = (data: WebSocket.RawData) => {
+        clearTimeout(timer);
+        this.wsClient!.off('message', handler);
+        try {
+          resolve(JSON.parse(data.toString()));
+        } catch (err) {
+          reject(err);
+        }
+      };
+      this.wsClient!.on('message', handler);
+    });
   }
 }
 
@@ -34,6 +60,7 @@ After(async function (this: TestWorld) {
   if (this.wsClient) {
     this.wsClient.close();
     this.wsClient = null;
+    this.wsMessages = [];
   }
   if (this.gateway) {
     await this.gateway.stop();

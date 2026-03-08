@@ -13,8 +13,7 @@ function findFreePort(): Promise<number> {
         const port = addr.port;
         server.close(() => resolve(port));
       } else {
-        server.close();
-        reject(new Error('Failed to get free port'));
+        server.close(() => reject(new Error('Failed to get free port')));
       }
     });
     server.on('error', reject);
@@ -65,9 +64,7 @@ async function pollHealth(url: string, maxMs: number): Promise<void> {
     try {
       const res = await fetch(`${url}/health`);
       if (res.status === 200) return;
-    } catch (_err) {
-      void _err;
-    }
+    } catch (_err) {}
     await new Promise((r) => setTimeout(r, 100));
   }
   throw new Error(`Gateway at ${url} did not become healthy within ${maxMs}ms`);
@@ -98,11 +95,8 @@ export class TestGateway {
     const binary = findGatewayBinary();
     this.process = child_process.spawn(binary, [], {
       env: { ...process.env, GATEWAY_CONFIG: this.configPath },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: 'ignore',
     });
-
-    this.process.stdout?.on('data', () => {});
-    this.process.stderr?.on('data', () => {});
 
     this.process.on('error', (err) => {
       throw new Error(`Gateway process error: ${err.message}`);
@@ -113,7 +107,6 @@ export class TestGateway {
 
   async stop(): Promise<void> {
     if (this.process) {
-      this.process.kill('SIGTERM');
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
           this.process?.kill('SIGKILL');
@@ -123,6 +116,7 @@ export class TestGateway {
           clearTimeout(timer);
           resolve();
         });
+        this.process!.kill('SIGTERM');
       });
       this.process = null;
     }
