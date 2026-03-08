@@ -71,7 +71,21 @@ GATEWAY_CONFIG=config.json cargo run
 3. **AI Code Review**: PRs are reviewed by gito.bot with Anthropic Claude.
 4. **Test Coverage**: Target 80%+ coverage. Use `cargo llvm-cov` to check.
 5. **Config Secrets**: Use `${ENV_VAR}` syntax in config for sensitive values.
-6. **PR Merging**: NEVER auto-merge PRs (no `gh pr merge --admin` or any merge command). Always create the PR, report the URL, and wait for a human to review and merge.
+6. **PR Merging**: NEVER auto-merge PRs (no `gh pr merge --admin` or any merge command). Always create the PR, report the URL, and wait for a human to merge.
+
+## Project Workflow
+
+Full workflow definition: [`docs/workflow.md`](docs/workflow.md)
+
+**Issue statuses:** Backlog → Ready → In Review → Done
+
+**Atlas must:**
+- Move issue to **In Review** when a PR is opened (`Closes #N` in PR body)
+- Move issue to **Done** when a PR is merged
+- After merge: check roadmap for newly unblocked issues → move to **Ready** if dev plan exists, else leave in **Backlog**
+- Before marking **Ready**: confirm all blockers are Done AND a dev plan exists at `docs/dev-plans/{issue-slug}.md` (or equivalent documentation is sufficient)
+- Remove the `blocked` label from issues when their blockers are resolved
+- PRs must include `Closes #N` in the body to link the issue
 
 ## Config Structure
 
