@@ -95,6 +95,13 @@ jobs:
       - name: Build release
         run: cargo build --release --verbose
 
+      - name: Upload gateway binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-binary
+          path: target/release/msg-gateway
+          retention-days: 1
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
@@ -102,22 +109,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - name: Download gateway binary
+        uses: actions/download-artifact@v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          name: gateway-binary
+          path: target/release
 
-      - name: Build gateway binary
-        run: cargo build --release
+      - name: Make binary executable
+        run: chmod +x target/release/msg-gateway
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

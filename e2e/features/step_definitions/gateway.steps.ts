@@ -25,7 +25,6 @@ When('I GET {string}', async function (this: TestWorld, path: string) {
   try {
     this.lastResponseBody = await this.lastResponse.clone().json();
   } catch (_err) {
-    void _err;
     this.lastResponseBody = null;
   }
 });
@@ -38,7 +37,6 @@ When('I POST {string} with body:', async function (this: TestWorld, path: string
   try {
     this.lastResponseBody = await this.lastResponse.clone().json();
   } catch (_err) {
-    void _err;
     this.lastResponseBody = null;
   }
 });
@@ -88,14 +86,33 @@ Given(
   'a WebSocket client connected to {string} with token {string}',
   async function (this: TestWorld, wsPath: string, token: string) {
     const wsUrl = this.gateway!.gatewayUrl.replace('http://', 'ws://') + wsPath;
+    this.wsMessages = [];
     await new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(wsUrl, { headers: { Authorization: `Bearer ${token}` } });
-      ws.on('open', () => {
+      const timeoutId = setTimeout(() => {
+        ws.off('open', openHandler);
+        ws.off('error', errorHandler);
+        ws.terminate();
+        reject(new Error('WebSocket connection timed out'));
+      }, 5000);
+      const openHandler = () => {
+        clearTimeout(timeoutId);
+        ws.off('error', errorHandler);
         this.wsClient = ws;
+        ws.on('message', (data: WebSocket.RawData) => {
+          try {
+            this.wsMessages.push(JSON.parse(data.toString()));
+          } catch (_err) {}
+        });
         resolve();
-      });
-      ws.on('error', reject);
-      setTimeout(() => reject(new Error('WebSocket connection timed out')), 5000);
+      };
+      const errorHandler = (err: Error) => {
+        clearTimeout(timeoutId);
+        ws.off('open', openHandler);
+        reject(err);
+      };
+      ws.on('open', openHandler);
+      ws.on('error', errorHandler);
     });
   }
 );
@@ -103,18 +120,7 @@ Given(
 Then(
   'the WebSocket client should receive a message with text {string} within {int}ms',
   async function (this: TestWorld, expectedText: string, timeoutMs: number) {
-    const ws = this.wsClient!;
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`WS message not received within ${timeoutMs}ms`)),
-        timeoutMs
-      );
-      ws.on('message', (data: WebSocket.RawData) => {
-        clearTimeout(timer);
-        const msg = JSON.parse(data.toString()) as Record<string, unknown>;
-        expect(msg.text).to.equal(expectedText);
-        resolve();
-      });
-    });
+    const msg = (await this.waitForWsMessage(timeoutMs)) as Record<string, unknown>;
+    expect(msg.text).to.equal(expectedText);
   }
 );

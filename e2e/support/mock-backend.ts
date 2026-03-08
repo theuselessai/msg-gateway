@@ -13,6 +13,7 @@ export class MockBackend {
         req.on('data', (chunk: Buffer) => {
           body += chunk.toString();
         });
+        req.on('error', () => {});
         req.on('end', () => {
           let parsed: unknown;
           try {
@@ -39,7 +40,10 @@ export class MockBackend {
 
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
+      const errorHandler = (err: Error) => reject(err);
+      this.server.once('error', errorHandler);
       this.server.listen(0, '127.0.0.1', () => {
+        this.server.removeListener('error', errorHandler);
         const addr = this.server.address();
         if (addr && typeof addr === 'object') {
           this._port = addr.port;
@@ -48,7 +52,6 @@ export class MockBackend {
           reject(new Error('Failed to get server address'));
         }
       });
-      this.server.on('error', reject);
     });
   }
 
@@ -74,6 +77,9 @@ export class MockBackend {
   }
 
   waitForMessage(timeoutMs: number): Promise<unknown> {
+    if (this.messages.length > 0) {
+      return Promise.resolve(this.messages.shift());
+    }
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         const idx = this.waiters.findIndex((w) => w.resolve === resolve);

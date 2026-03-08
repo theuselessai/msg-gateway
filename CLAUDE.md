@@ -71,6 +71,7 @@ GATEWAY_CONFIG=config.json cargo run
 3. **AI Code Review**: PRs are reviewed by gito.bot with Anthropic Claude.
 4. **Test Coverage**: Target 80%+ coverage. Use `cargo llvm-cov` to check.
 5. **Config Secrets**: Use `${ENV_VAR}` syntax in config for sensitive values.
+6. **PR Merging**: NEVER auto-merge PRs (no `gh pr merge --admin` or any merge command). Always create the PR, report the URL, and wait for a human to review and merge.
 
 ## Config Structure
 
