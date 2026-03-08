@@ -1,5 +1,6 @@
 import * as net from 'net';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as child_process from 'child_process';
 import { MockBackend } from './mock-backend';
@@ -29,7 +30,16 @@ function findGatewayBinary(): string {
   throw new Error(`Gateway binary not found at ${release} or ${debug}. Run 'cargo build' first.`);
 }
 
-function buildConfig(gatewayPort: number, backend: MockBackend): object {
+function buildConfig(
+  gatewayPort: number,
+  backend: MockBackend,
+  fileCacheDir: string,
+  extras?: {
+    adaptersDir?: string;
+    adapterPortRange?: [number, number];
+    credentials?: Record<string, unknown>;
+  }
+): object {
   return {
     gateway: {
       listen: `127.0.0.1:${gatewayPort}`,
@@ -39,8 +49,22 @@ function buildConfig(gatewayPort: number, backend: MockBackend): object {
         inbound_url: backend.inboundUrl,
         token: 'test_backend_token',
       },
-      adapters_dir: '../adapters',
-      adapter_port_range: [19000, 19100],
+      adapters_dir: extras?.adaptersDir ?? '../adapters',
+      adapter_port_range: extras?.adapterPortRange ?? [19000, 19100],
+      file_cache: {
+        directory: fileCacheDir,
+        ttl_hours: 24,
+        max_cache_size_mb: 100,
+        cleanup_interval_minutes: 60,
+        max_file_size_mb: 10,
+        allowed_mime_types: [
+          'image/jpeg',
+          'image/png',
+          'text/plain',
+          'application/pdf',
+          'application/octet-stream',
+        ],
+      },
     },
     auth: {
       send_token: 'test_send_token',
@@ -54,6 +78,7 @@ function buildConfig(gatewayPort: number, backend: MockBackend): object {
         emergency: false,
         route: { channel: 'test' },
       },
+      ...(extras?.credentials ?? {}),
     },
   };
 }
@@ -73,7 +98,9 @@ async function pollHealth(url: string, maxMs: number): Promise<void> {
 export class TestGateway {
   private process: child_process.ChildProcess | null = null;
   private configPath: string | null = null;
+  private fileCacheDir: string | null = null;
   private _gatewayPort: number = 0;
+  private _adapterPortRange: [number, number] | null = null;
 
   readonly sendToken = 'test_send_token';
   readonly adminToken = 'test_admin_token';
@@ -84,10 +111,11 @@ export class TestGateway {
 
   async start(backend: MockBackend): Promise<void> {
     this._gatewayPort = await findFreePort();
-    const config = buildConfig(this._gatewayPort, backend);
+    this.fileCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-gateway-files-'));
+    const config = buildConfig(this._gatewayPort, backend, this.fileCacheDir);
 
     this.configPath = path.join(
-      require('os').tmpdir(),
+      os.tmpdir(),
       `test-gateway-config-${Date.now()}-${Math.random().toString(36).slice(2)}.json`
     );
     fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2));
@@ -105,8 +133,50 @@ export class TestGateway {
     await pollHealth(this.gatewayUrl, 10000);
   }
 
+  async startWithTelegram(backend: MockBackend, telegramApiRoot: string): Promise<void> {
+    this._gatewayPort = await findFreePort();
+    this.fileCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-gateway-files-'));
+    const adapterPortBase = 20000 + Math.floor(Math.random() * 9000);
+    this._adapterPortRange = [adapterPortBase, adapterPortBase + 100];
+    const config = buildConfig(this._gatewayPort, backend, this.fileCacheDir, {
+      adaptersDir: path.resolve(__dirname, '../../adapters'),
+      adapterPortRange: this._adapterPortRange,
+      credentials: {
+        test_telegram: {
+          adapter: 'telegram',
+          token: 'test_bot_token',
+          active: true,
+          emergency: false,
+          route: { channel: 'telegram' },
+          config: { api_root: telegramApiRoot },
+        },
+      },
+    });
+
+    this.configPath = path.join(
+      os.tmpdir(),
+      `test-gateway-config-${Date.now()}-${Math.random().toString(36).slice(2)}.json`
+    );
+    fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2));
+
+    const binary = findGatewayBinary();
+    this.process = child_process.spawn(binary, [], {
+      env: { ...process.env, GATEWAY_CONFIG: this.configPath },
+      stdio: 'ignore',
+    });
+
+    this.process.on('error', (err) => {
+      throw new Error(`Gateway process error: ${err.message}`);
+    });
+
+    await pollHealth(this.gatewayUrl, 20000);
+    // Allow adapter polling loop to start after health check passes
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+
   async stop(): Promise<void> {
     if (this.process) {
+      const pid = this.process.pid;
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
           this.process?.kill('SIGKILL');
@@ -119,10 +189,32 @@ export class TestGateway {
         this.process!.kill('SIGTERM');
       });
       this.process = null;
+
+      // Kill any orphaned child processes (e.g. adapter subprocesses)
+      if (pid) {
+        try {
+          child_process.execSync(`pkill -P ${pid} 2>/dev/null`, { stdio: 'ignore' });
+        } catch {}
+      }
     }
+
+    // Kill any processes still listening on the adapter port range
+    if (this._adapterPortRange) {
+      for (let port = this._adapterPortRange[0]; port <= Math.min(this._adapterPortRange[0] + 10, this._adapterPortRange[1]); port++) {
+        try {
+          child_process.execSync(`fuser -k ${port}/tcp 2>/dev/null`, { stdio: 'ignore' });
+        } catch {}
+      }
+      this._adapterPortRange = null;
+    }
+
     if (this.configPath && fs.existsSync(this.configPath)) {
       fs.unlinkSync(this.configPath);
       this.configPath = null;
+    }
+    if (this.fileCacheDir && fs.existsSync(this.fileCacheDir)) {
+      fs.rmSync(this.fileCacheDir, { recursive: true, force: true });
+      this.fileCacheDir = null;
     }
   }
 }

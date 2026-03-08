@@ -1,16 +1,30 @@
-import { World, setWorldConstructor, After, IWorldOptions } from '@cucumber/cucumber';
+import { World, setWorldConstructor, After, IWorldOptions, setDefaultTimeout } from '@cucumber/cucumber';
 import { MockBackend } from '../../support/mock-backend';
+import { MockTelegramServer } from '../../support/mock-telegram-server';
+import { MockFileServer } from '../../support/mock-file-server';
 import { TestGateway } from '../../support/test-gateway';
 import WebSocket from 'ws';
+
+setDefaultTimeout(30000);
 
 export class TestWorld extends World {
   gateway: TestGateway | null = null;
   backend: MockBackend | null = null;
+  mockTelegramServer: MockTelegramServer | null = null;
+  mockFileServer: MockFileServer | null = null;
   wsClient: WebSocket | null = null;
   wsMessages: unknown[] = [];
   lastResponse: Response | null = null;
   lastResponseBody: unknown = null;
   lastBackendMessage: unknown = null;
+  lastFileId: string | null = null;
+  lastFileDownloadUrl: string | null = null;
+  lastAdminResponse: Record<string, unknown> | null = null;
+  lastUploadResponse: Response | null = null;
+  lastUploadResponseBody: Record<string, unknown> | null = null;
+  lastDownloadResponse: Response | null = null;
+  lastDownloadResponseBody: string | null = null;
+  lastTelegramSentMessage: Record<string, unknown> | null = null;
   pendingHeaders: Record<string, string> = {};
 
   constructor(options: IWorldOptions) {
@@ -72,5 +86,13 @@ After(async function (this: TestWorld) {
   if (this.backend) {
     await this.backend.stop();
     this.backend = null;
+  }
+  if (this.mockTelegramServer) {
+    await this.mockTelegramServer.stop();
+    this.mockTelegramServer = null;
+  }
+  if (this.mockFileServer) {
+    await this.mockFileServer.stop();
+    this.mockFileServer = null;
   }
 });

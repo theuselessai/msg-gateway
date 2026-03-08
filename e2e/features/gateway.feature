@@ -1,12 +1,6 @@
 Feature: Gateway Core
 
   @smoke
-  Scenario: Health endpoint returns 200
-    Given a running gateway
-    When I GET "/health"
-    Then the response status should be 200
-
-  @smoke
   Scenario: Inbound message via generic adapter is routed to backend
     Given a running gateway
     And a mock backend listening
@@ -41,3 +35,20 @@ Feature: Gateway Core
       {"credential_id": "test_generic", "chat_id": "chat_001", "text": "No auth"}
       """
     Then the response status should be 401
+
+  @smoke
+  Scenario: Health endpoint returns status ok in body
+    Given a running gateway
+    When I GET "/health"
+    Then the response status should be 200
+    And the response body status should be "ok"
+
+  @smoke
+  Scenario: Send to unknown credential returns 404
+    Given a running gateway
+    And header "Authorization" is "Bearer test_send_token"
+    When I POST "/api/v1/send" with body:
+      """
+      {"credential_id": "nonexistent_cred", "chat_id": "chat1", "text": "hello"}
+      """
+    Then the response status should be 404

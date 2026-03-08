@@ -9,12 +9,26 @@ const GATEWAY_URL = process.env.GATEWAY_URL ?? "http://localhost:8080";
 const CREDENTIAL_ID = process.env.CREDENTIAL_ID ?? "unknown";
 const CREDENTIAL_TOKEN = process.env.CREDENTIAL_TOKEN ?? "";
 
+// Parse optional credential config (JSON)
+const credentialConfig: Record<string, unknown> = (() => {
+  try {
+    return JSON.parse(process.env.CREDENTIAL_CONFIG ?? '{}') as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+})();
+
+// Optional: override Telegram API root (used in E2E tests to point to a mock server)
+const TELEGRAM_API_ROOT = typeof credentialConfig.api_root === 'string'
+  ? credentialConfig.api_root
+  : undefined;
+
 function log(msg: string): void {
   const ts = new Date().toISOString();
   process.stderr.write(`[${ts}] [${INSTANCE_ID}] ${msg}\n`);
 }
 
-const bot = new Bot(CREDENTIAL_TOKEN);
+const bot = new Bot(CREDENTIAL_TOKEN, TELEGRAM_API_ROOT ? { client: { apiRoot: TELEGRAM_API_ROOT } } : undefined);
 
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
 
@@ -83,7 +97,8 @@ async function resolveFileUrl(fileId: string): Promise<string | null> {
   try {
     const file = await bot.api.getFile(fileId);
     if (file.file_path) {
-      return `https://api.telegram.org/file/bot${CREDENTIAL_TOKEN}/${file.file_path}`;
+      const apiRoot = TELEGRAM_API_ROOT ?? 'https://api.telegram.org';
+      return `${apiRoot}/file/bot${CREDENTIAL_TOKEN}/${file.file_path}`;
     }
   } catch (err) {
     log(`Failed to resolve file ${fileId}: ${err}`);
