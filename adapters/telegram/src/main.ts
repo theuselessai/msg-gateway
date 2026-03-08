@@ -194,6 +194,18 @@ interface SendRequest {
   extra_data?: Record<string, unknown>;
 }
 
+function validateFilePath(filePath: string): boolean {
+  if (!path.isAbsolute(filePath)) {
+    log(`Rejected non-absolute file path: ${filePath}`);
+    return false;
+  }
+  if (filePath.includes("..")) {
+    log(`Rejected path traversal attempt: ${filePath}`);
+    return false;
+  }
+  return true;
+}
+
 async function sendOutbound(body: SendRequest): Promise<string> {
   const chatId = body.chat_id;
   const text = body.text ?? "";
@@ -217,6 +229,7 @@ async function sendOutbound(body: SendRequest): Promise<string> {
     for (let i = 0; i < filePaths.length; i++) {
       const filePath = filePaths[i];
       const isFirstFile = i === 0;
+      if (!validateFilePath(filePath)) continue;
       try {
         const ext = path.extname(filePath).toLowerCase();
         const isImage = IMAGE_EXTENSIONS.has(ext);
