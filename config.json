@@ -1,0 +1,36 @@
+{
+  "gateway": {
+    "listen": "127.0.0.1:38825",
+    "admin_token": "test_admin_token",
+    "default_target": {
+      "protocol": "pipelit",
+      "inbound_url": "http://127.0.0.1:18000/inbound",
+      "base_url": null,
+      "token": "test_backend_token",
+      "poll_interval_ms": null
+    },
+    "adapters_dir": "./adapters",
+    "adapter_port_range": [
+      19000,
+      19100
+    ],
+    "file_cache": null
+  },
+  "auth": {
+    "send_token": "test_send_token"
+  },
+  "health_checks": {},
+  "credentials": {
+    "test_generic": {
+      "adapter": "generic",
+      "token": "generic_token",
+      "active": true,
+      "emergency": true,
+      "config": null,
+      "target": null,
+      "route": {
+        "channel": "updated"
+      }
+    }
+  }
+}

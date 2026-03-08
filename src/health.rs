@@ -466,6 +466,7 @@ mod tests {
                 protocol: "test".to_string(),
                 chat_id: "chat1".to_string(),
                 message_id: id.to_string(),
+                reply_to_message_id: None,
                 from: UserInfo {
                     id: "user1".to_string(),
                     username: None,
@@ -475,6 +476,7 @@ mod tests {
             text: "test message".to_string(),
             attachments: vec![],
             timestamp: Utc::now(),
+            extra_data: None,
         };
 
         // Buffer first message
@@ -611,6 +613,7 @@ mod tests {
                 protocol: "test".to_string(),
                 chat_id: "chat1".to_string(),
                 message_id: id.to_string(),
+                reply_to_message_id: None,
                 from: UserInfo {
                     id: "user1".to_string(),
                     username: None,
@@ -620,6 +623,7 @@ mod tests {
             text: "test message".to_string(),
             attachments: vec![],
             timestamp: Utc::now(),
+            extra_data: None,
         };
 
         // Fill buffer exactly to capacity
@@ -692,6 +696,7 @@ mod tests {
                 protocol: "test".to_string(),
                 chat_id: "chat1".to_string(),
                 message_id: id.to_string(),
+                reply_to_message_id: None,
                 from: UserInfo {
                     id: "user1".to_string(),
                     username: None,
@@ -701,6 +706,7 @@ mod tests {
             text: "test message".to_string(),
             attachments: vec![],
             timestamp: Utc::now(),
+            extra_data: None,
         };
 
         // Spawn multiple tasks to buffer messages concurrently

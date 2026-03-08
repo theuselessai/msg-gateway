@@ -825,12 +825,20 @@ pub struct AdapterInboundRequest {
     pub instance_id: String,
     pub chat_id: String,
     pub message_id: String,
+    #[serde(default)]
+    pub reply_to_message_id: Option<String>,
     pub text: String,
     pub from: AdapterUser,
+    /// Single file attachment (v0.1 compat, deprecated — use `files` instead)
     #[serde(default)]
     pub file: Option<AdapterFileInfo>,
+    /// Multiple file attachments (v0.2+)
+    #[serde(default)]
+    pub files: Vec<AdapterFileInfo>,
     #[serde(default)]
     pub timestamp: Option<String>,
+    #[serde(default)]
+    pub extra_data: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -858,8 +866,14 @@ pub struct AdapterSendRequest {
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_to_message_id: Option<String>,
+    /// Single file path (v0.1 compat, deprecated — use `file_paths` instead)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
+    /// Multiple file paths (v0.2+)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_data: Option<serde_json::Value>,
 }
 
 /// Response from adapter send
@@ -1607,6 +1621,8 @@ mod tests {
             text: "Hello!".to_string(),
             reply_to_message_id: None,
             file_path: None,
+            file_paths: vec![],
+            extra_data: None,
         };
 
         let json = serde_json::to_string(&req).unwrap();
@@ -1615,6 +1631,8 @@ mod tests {
         // Optional fields should be skipped
         assert!(!json.contains("reply_to_message_id"));
         assert!(!json.contains("file_path"));
+        assert!(!json.contains("file_paths"));
+        assert!(!json.contains("extra_data"));
     }
 
     #[test]
@@ -1624,6 +1642,8 @@ mod tests {
             text: "Reply!".to_string(),
             reply_to_message_id: Some("msg_001".to_string()),
             file_path: None,
+            file_paths: vec![],
+            extra_data: None,
         };
 
         let json = serde_json::to_string(&req).unwrap();
@@ -1637,10 +1657,31 @@ mod tests {
             text: "File!".to_string(),
             reply_to_message_id: None,
             file_path: Some("/tmp/file.pdf".to_string()),
+            file_paths: vec![],
+            extra_data: None,
         };
 
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"file_path\":\"/tmp/file.pdf\""));
+    }
+
+    #[test]
+    fn test_adapter_send_request_with_file_paths() {
+        let req = AdapterSendRequest {
+            chat_id: "12345".to_string(),
+            text: "Multiple files!".to_string(),
+            reply_to_message_id: None,
+            file_path: None,
+            file_paths: vec!["/tmp/a.pdf".to_string(), "/tmp/b.png".to_string()],
+            extra_data: Some(serde_json::json!({"thread_id": "123"})),
+        };
+
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"file_paths\""));
+        assert!(json.contains("/tmp/a.pdf"));
+        assert!(json.contains("/tmp/b.png"));
+        assert!(json.contains("\"extra_data\""));
+        assert!(json.contains("\"thread_id\""));
     }
 
     #[test]

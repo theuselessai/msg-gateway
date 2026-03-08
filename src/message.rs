@@ -10,6 +10,8 @@ pub struct InboundMessage {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_data: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +19,8 @@ pub struct MessageSource {
     pub protocol: String,
     pub chat_id: String,
     pub message_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to_message_id: Option<String>,
     pub from: UserInfo,
 }
 
@@ -47,6 +51,10 @@ pub struct OutboundMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to_message_id: Option<String>,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_data: Option<serde_json::Value>,
 }
 
 /// Response after sending a message
