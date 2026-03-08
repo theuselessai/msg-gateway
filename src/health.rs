@@ -498,4 +498,227 @@ mod tests {
         // Buffer should be empty now
         assert_eq!(monitor.buffer_size().await, 0);
     }
+
+    #[tokio::test]
+    async fn test_last_healthy_ago() {
+        let monitor = HealthMonitor::new(100);
+
+        // Initially should have a last_healthy timestamp
+        let duration = monitor.last_healthy_ago().await;
+        assert!(duration.is_some());
+        // Should be very recent (less than 1 second)
+        assert!(duration.unwrap().as_secs() < 1);
+
+        // After recording success, should update timestamp
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        monitor.record_success().await;
+        let duration2 = monitor.last_healthy_ago().await;
+        assert!(duration2.is_some());
+        // Use lenient threshold to avoid flaky tests on slow/busy systems
+        assert!(duration2.unwrap().as_millis() < 500);
+    }
+
+    #[tokio::test]
+    async fn test_health_state_equality() {
+        // Test PartialEq and Eq implementations
+        assert_eq!(HealthState::Healthy, HealthState::Healthy);
+        assert_eq!(HealthState::Degraded, HealthState::Degraded);
+        assert_eq!(HealthState::Down, HealthState::Down);
+        assert_eq!(HealthState::Recovering, HealthState::Recovering);
+
+        assert_ne!(HealthState::Healthy, HealthState::Degraded);
+        assert_ne!(HealthState::Down, HealthState::Recovering);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::clone_on_copy)]
+    async fn test_health_state_clone_copy() {
+        // Test Clone and Copy implementations
+        let state = HealthState::Healthy;
+        let cloned = state.clone(); // Intentionally testing clone on Copy type
+        let copied = state;
+
+        assert_eq!(state, cloned);
+        assert_eq!(state, copied);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_failures_staying_down() {
+        let monitor = HealthMonitor::new(100);
+        let alert_threshold = 2;
+
+        // Go to Down state
+        monitor.record_failure(alert_threshold).await;
+        monitor.record_failure(alert_threshold).await;
+        assert_eq!(monitor.get_state().await, HealthState::Down);
+
+        // Additional failures should not cause state changes
+        let change = monitor.record_failure(alert_threshold).await;
+        assert!(change.is_none());
+        assert_eq!(monitor.get_state().await, HealthState::Down);
+
+        let change = monitor.record_failure(alert_threshold).await;
+        assert!(change.is_none());
+        assert_eq!(monitor.get_state().await, HealthState::Down);
+    }
+
+    #[tokio::test]
+    async fn test_failure_count_reset_on_success() {
+        let monitor = HealthMonitor::new(100);
+        let alert_threshold = 3;
+
+        // Add some failures (but not enough to go Down)
+        monitor.record_failure(alert_threshold).await;
+        monitor.record_failure(alert_threshold).await;
+        assert_eq!(monitor.get_state().await, HealthState::Degraded);
+
+        // Success should reset failure count
+        monitor.record_success().await;
+        assert_eq!(monitor.get_state().await, HealthState::Healthy);
+
+        // Now failures should start from 0 again
+        let change = monitor.record_failure(alert_threshold).await;
+        assert_eq!(change, Some(HealthState::Degraded));
+
+        // Need 2 more failures to reach threshold, not just 1
+        let change = monitor.record_failure(alert_threshold).await;
+        assert!(change.is_none()); // Still degraded
+
+        let change = monitor.record_failure(alert_threshold).await;
+        assert_eq!(change, Some(HealthState::Down));
+    }
+
+    #[tokio::test]
+    async fn test_drain_empty_buffer() {
+        let monitor = HealthMonitor::new(100);
+
+        // Draining empty buffer should return empty vec
+        let messages = monitor.drain_buffer().await;
+        assert!(messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_buffer_exactly_at_max_size() {
+        use crate::message::{InboundMessage, MessageSource, UserInfo};
+        use chrono::Utc;
+
+        let monitor = HealthMonitor::new(3);
+
+        let make_message = |id: &str| InboundMessage {
+            route: serde_json::json!("test"),
+            credential_id: "cred1".to_string(),
+            source: MessageSource {
+                protocol: "test".to_string(),
+                chat_id: "chat1".to_string(),
+                message_id: id.to_string(),
+                from: UserInfo {
+                    id: "user1".to_string(),
+                    username: None,
+                    display_name: None,
+                },
+            },
+            text: "test message".to_string(),
+            attachments: vec![],
+            timestamp: Utc::now(),
+        };
+
+        // Fill buffer exactly to capacity
+        monitor.buffer_message(make_message("msg1")).await;
+        monitor.buffer_message(make_message("msg2")).await;
+        monitor.buffer_message(make_message("msg3")).await;
+        assert_eq!(monitor.buffer_size().await, 3);
+
+        // Next message should cause oldest to be dropped
+        monitor.buffer_message(make_message("msg4")).await;
+        assert_eq!(monitor.buffer_size().await, 3);
+
+        let messages = monitor.drain_buffer().await;
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].source.message_id, "msg2");
+        assert_eq!(messages[1].source.message_id, "msg3");
+        assert_eq!(messages[2].source.message_id, "msg4");
+    }
+
+    #[tokio::test]
+    async fn test_recovery_from_degraded_state() {
+        let monitor = HealthMonitor::new(100);
+        let alert_threshold = 5;
+
+        // Go to Degraded state (but not Down)
+        monitor.record_failure(alert_threshold).await;
+        assert_eq!(monitor.get_state().await, HealthState::Degraded);
+
+        // Success from Degraded should go directly to Healthy
+        let change = monitor.record_success().await;
+        assert_eq!(change, Some(HealthState::Healthy));
+        assert_eq!(monitor.get_state().await, HealthState::Healthy);
+    }
+
+    #[tokio::test]
+    async fn test_health_state_debug() {
+        // Test Debug implementation
+        let state = HealthState::Healthy;
+        let debug_str = format!("{:?}", state);
+        assert_eq!(debug_str, "Healthy");
+
+        let state = HealthState::Down;
+        let debug_str = format!("{:?}", state);
+        assert_eq!(debug_str, "Down");
+    }
+
+    #[tokio::test]
+    async fn test_threshold_of_one() {
+        let monitor = HealthMonitor::new(100);
+        let alert_threshold = 1;
+
+        // First failure should immediately go to Down
+        let change = monitor.record_failure(alert_threshold).await;
+        assert_eq!(change, Some(HealthState::Down));
+        assert_eq!(monitor.get_state().await, HealthState::Down);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_buffer_access() {
+        use crate::message::{InboundMessage, MessageSource, UserInfo};
+        use chrono::Utc;
+        use std::sync::Arc;
+
+        let monitor = Arc::new(HealthMonitor::new(100));
+
+        let make_message = |id: &str| InboundMessage {
+            route: serde_json::json!("test"),
+            credential_id: "cred1".to_string(),
+            source: MessageSource {
+                protocol: "test".to_string(),
+                chat_id: "chat1".to_string(),
+                message_id: id.to_string(),
+                from: UserInfo {
+                    id: "user1".to_string(),
+                    username: None,
+                    display_name: None,
+                },
+            },
+            text: "test message".to_string(),
+            attachments: vec![],
+            timestamp: Utc::now(),
+        };
+
+        // Spawn multiple tasks to buffer messages concurrently
+        let mut handles = vec![];
+        for i in 0..10 {
+            let monitor_clone = Arc::clone(&monitor);
+            let msg = make_message(&format!("msg{}", i));
+            handles.push(tokio::spawn(async move {
+                monitor_clone.buffer_message(msg).await
+            }));
+        }
+
+        // Wait for all tasks
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        // All messages should be buffered
+        assert_eq!(monitor.buffer_size().await, 10);
+    }
 }
