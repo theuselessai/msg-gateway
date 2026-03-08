@@ -32,14 +32,6 @@ When(
 );
 
 Then(
-  'the admin response status should be {int}',
-  function (this: TestWorld, expectedStatus: number) {
-    expect(this.lastResponse).to.not.be.null;
-    expect(this.lastResponse!.status).to.equal(expectedStatus);
-  }
-);
-
-Then(
   'the admin response id should be {string}',
   function (this: TestWorld, expected: string) {
     expect(this.lastAdminResponse).to.not.be.null;

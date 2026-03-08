@@ -13,14 +13,14 @@ Given('a mock file server running', async function (this: TestWorld) {
 When(
   'I POST {string} with body from mock file server',
   async function (this: TestWorld, path: string) {
-    expect(this.mockFileServer).to.not.be.null;
+    if (!this.mockFileServer) throw new Error('Mock file server is not initialized');
     const body = JSON.stringify({
       chat_id: 'chat_file_test',
       text: 'File test message',
       from: { id: 'user_file' },
       files: [
         {
-          url: this.mockFileServer!.fileUrl,
+          url: this.mockFileServer.fileUrl,
           filename: 'test.txt',
           mime_type: 'text/plain',
         },
@@ -53,6 +53,7 @@ Then(
   function (this: TestWorld, expected: string) {
     const msg = this.lastBackendMessage as Record<string, unknown>;
     const attachments = msg.attachments as Array<Record<string, unknown>>;
+    expect(attachments).to.be.an('array').with.length.at.least(1);
     expect(attachments[0].filename).to.equal(expected);
   }
 );
@@ -62,6 +63,7 @@ Then(
   function (this: TestWorld, expected: string) {
     const msg = this.lastBackendMessage as Record<string, unknown>;
     const attachments = msg.attachments as Array<Record<string, unknown>>;
+    expect(attachments).to.be.an('array').with.length.at.least(1);
     expect(attachments[0].mime_type).to.equal(expected);
   }
 );

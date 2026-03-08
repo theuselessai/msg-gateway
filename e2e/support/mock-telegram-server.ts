@@ -113,7 +113,8 @@ export class MockTelegramServer {
     const msgId = this.nextMessageId++;
     const msg: SentMessage = {
       chat_id: String(body.chat_id ?? ''),
-      text: typeof body.text === 'string' ? body.text : (typeof body.caption === 'string' ? body.caption : undefined),
+      text: typeof body.text === 'string' ? body.text : undefined,
+      caption: typeof body.caption === 'string' ? body.caption : undefined,
       type,
     };
     if (body.reply_parameters && typeof body.reply_parameters === 'object') {
@@ -127,7 +128,7 @@ export class MockTelegramServer {
     this.respond(res, {
       message_id: msgId,
       from: { id: 123456, is_bot: true, first_name: 'TestBot', username: 'testbot' },
-      chat: { id: parseInt(msg.chat_id) || 0, type: 'private' },
+      chat: { id: parseInt(msg.chat_id, 10) || 0, type: 'private' },
       date: Math.floor(Date.now() / 1000),
       text: msg.text,
     });

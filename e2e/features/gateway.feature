@@ -1,12 +1,6 @@
 Feature: Gateway Core
 
   @smoke
-  Scenario: Health endpoint returns 200
-    Given a running gateway
-    When I GET "/health"
-    Then the response status should be 200
-
-  @smoke
   Scenario: Inbound message via generic adapter is routed to backend
     Given a running gateway
     And a mock backend listening

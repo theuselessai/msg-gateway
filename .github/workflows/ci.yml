@@ -123,7 +123,9 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: e2e/package-lock.json
+          cache-dependency-path: |
+            e2e/package-lock.json
+            adapters/telegram/package-lock.json
 
       - name: Install E2E dependencies
         run: npm ci
