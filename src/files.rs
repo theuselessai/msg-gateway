@@ -236,7 +236,6 @@ impl FileCache {
     }
 
     /// Store file data directly (for outbound files from backend)
-    #[allow(dead_code)]
     pub async fn store_file(
         &self,
         data: Vec<u8>,
@@ -342,7 +341,6 @@ impl FileCache {
     }
 
     /// Get file path (for passing to adapters)
-    #[allow(dead_code)]
     pub async fn get_file_path(&self, file_id: &str) -> Option<PathBuf> {
         let files = self.files.read().await;
         files.get(file_id).map(|f| f.path.clone())

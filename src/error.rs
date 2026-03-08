@@ -25,6 +25,15 @@ pub enum AppError {
     #[error("Gone: {0}")]
     Gone(String),
 
+    #[error("Payload too large: {0}")]
+    PayloadTooLarge(String),
+
+    #[error("Unsupported media type: {0}")]
+    UnsupportedMediaType(String),
+
+    #[error("Bad request: {0}")]
+    BadRequest(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -44,6 +53,11 @@ impl IntoResponse for AppError {
             ),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::Gone(msg) => (StatusCode::GONE, msg.clone()),
+            AppError::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg.clone()),
+            AppError::UnsupportedMediaType(msg) => {
+                (StatusCode::UNSUPPORTED_MEDIA_TYPE, msg.clone())
+            }
+            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
         };
 
@@ -83,6 +97,18 @@ mod tests {
         assert_eq!(
             AppError::Gone("expired".to_string()).to_string(),
             "Gone: expired"
+        );
+        assert_eq!(
+            AppError::PayloadTooLarge("too big".to_string()).to_string(),
+            "Payload too large: too big"
+        );
+        assert_eq!(
+            AppError::UnsupportedMediaType("bad type".to_string()).to_string(),
+            "Unsupported media type: bad type"
+        );
+        assert_eq!(
+            AppError::BadRequest("missing field".to_string()).to_string(),
+            "Bad request: missing field"
         );
         assert_eq!(
             AppError::Internal("oops".to_string()).to_string(),
@@ -162,6 +188,39 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error"], "file expired");
+    }
+
+    #[tokio::test]
+    async fn test_app_error_into_response_payload_too_large() {
+        let err = AppError::PayloadTooLarge("File too large".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "File too large");
+    }
+
+    #[tokio::test]
+    async fn test_app_error_into_response_unsupported_media_type() {
+        let err = AppError::UnsupportedMediaType("MIME type not allowed".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "MIME type not allowed");
+    }
+
+    #[tokio::test]
+    async fn test_app_error_into_response_bad_request() {
+        let err = AppError::BadRequest("Missing required field".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "Missing required field");
     }
 
     #[tokio::test]

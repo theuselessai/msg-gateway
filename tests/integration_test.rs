@@ -294,74 +294,247 @@ async fn test_get_credential() {
     assert_eq!(resp.status(), 404);
 }
 
+// ============================================================================
+// File Upload API Tests
+// ============================================================================
+
 #[tokio::test]
-#[serial]
-async fn test_create_credential() {
+async fn test_file_upload_and_download() {
     let port = find_available_port().await;
-
-    // Create temp config file
-    let temp_dir = std::env::temp_dir();
-    let config_path = temp_dir.join(format!("test_config_create_{}.json", port));
-    let config = test_config(port);
-    std::fs::write(&config_path, serde_json::to_string(&config).unwrap()).unwrap();
-    unsafe {
-        std::env::set_var("GATEWAY_CONFIG", &config_path);
-    }
-
-    let server = TestServer::new(config).await;
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let server = TestServer::new(test_config_with_file_cache(
+        port,
+        &temp_dir.path().to_string_lossy(),
+    ))
+    .await;
     let client = server.client();
 
-    // Create new credential
+    // Upload file via multipart
+    let file_content = b"Hello, this is test file content!";
+    let file_part = reqwest::multipart::Part::bytes(file_content.to_vec())
+        .file_name("test_document.txt")
+        .mime_str("text/plain")
+        .unwrap();
+
+    let form = reqwest::multipart::Form::new()
+        .part("file", file_part)
+        .text("filename", "test_document.txt")
+        .text("mime_type", "text/plain");
+
     let resp = client
-        .post(server.url("/admin/credentials"))
-        .header("Authorization", format!("Bearer {}", server.admin_token))
-        .json(&serde_json::json!({
-            "id": "new_cred",
-            "adapter": "generic",
-            "token": "new_token",
-            "active": false,
-            "route": {"channel": "new"}
-        }))
+        .post(server.url("/api/v1/files"))
+        .header("Authorization", format!("Bearer {}", server.send_token))
+        .multipart(form)
         .send()
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), 201);
+    assert_eq!(resp.status(), 200);
+
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["id"], "new_cred");
-    assert_eq!(body["status"], "created");
+    assert!(body["file_id"].as_str().unwrap().starts_with("f_"));
+    assert_eq!(body["filename"], "test_document.txt");
+    assert_eq!(body["mime_type"], "text/plain");
+    assert_eq!(body["size_bytes"], file_content.len() as u64);
+    assert!(body["download_url"].as_str().unwrap().contains("/files/"));
 
-    // Verify it exists
+    // Download file via GET /files/{file_id} (no auth required)
+    let file_id = body["file_id"].as_str().unwrap();
     let resp = client
-        .get(server.url("/admin/credentials/new_cred"))
-        .header("Authorization", format!("Bearer {}", server.admin_token))
+        .get(server.url(&format!("/files/{}", file_id)))
         .send()
         .await
         .unwrap();
 
-    assert!(resp.status().is_success());
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "text/plain"
+    );
+    let downloaded = resp.bytes().await.unwrap();
+    assert_eq!(downloaded.as_ref(), file_content);
+}
+
+#[tokio::test]
+async fn test_file_upload_no_auth() {
+    let port = find_available_port().await;
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let server = TestServer::new(test_config_with_file_cache(
+        port,
+        &temp_dir.path().to_string_lossy(),
+    ))
+    .await;
+    let client = server.client();
+
+    let file_part = reqwest::multipart::Part::bytes(b"data".to_vec())
+        .file_name("test.txt")
+        .mime_str("text/plain")
+        .unwrap();
+
+    let form = reqwest::multipart::Form::new()
+        .part("file", file_part)
+        .text("filename", "test.txt");
+
+    // No Authorization header
+    let resp = client
+        .post(server.url("/api/v1/files"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn test_file_upload_wrong_auth() {
+    let port = find_available_port().await;
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let server = TestServer::new(test_config_with_file_cache(
+        port,
+        &temp_dir.path().to_string_lossy(),
+    ))
+    .await;
+    let client = server.client();
+
+    let file_part = reqwest::multipart::Part::bytes(b"data".to_vec())
+        .file_name("test.txt")
+        .mime_str("text/plain")
+        .unwrap();
+
+    let form = reqwest::multipart::Form::new()
+        .part("file", file_part)
+        .text("filename", "test.txt");
+
+    let resp = client
+        .post(server.url("/api/v1/files"))
+        .header("Authorization", "Bearer wrong_token")
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn test_file_upload_filename_from_multipart() {
+    let port = find_available_port().await;
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let server = TestServer::new(test_config_with_file_cache(
+        port,
+        &temp_dir.path().to_string_lossy(),
+    ))
+    .await;
+    let client = server.client();
+
+    // Upload with filename only in multipart Content-Disposition (no explicit filename field)
+    let file_part = reqwest::multipart::Part::bytes(b"content".to_vec())
+        .file_name("from_multipart.txt")
+        .mime_str("text/plain")
+        .unwrap();
+
+    let form = reqwest::multipart::Form::new().part("file", file_part);
+
+    let resp = client
+        .post(server.url("/api/v1/files"))
+        .header("Authorization", format!("Bearer {}", server.send_token))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["adapter"], "generic");
-    assert_eq!(body["active"], false);
+    assert_eq!(body["filename"], "from_multipart.txt");
+}
 
-    // Try to create duplicate
+#[tokio::test]
+async fn test_file_upload_default_mime_type() {
+    let port = find_available_port().await;
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let server = TestServer::new(test_config_with_file_cache(
+        port,
+        &temp_dir.path().to_string_lossy(),
+    ))
+    .await;
+    let client = server.client();
+
+    // Upload without specifying mime_type — should default to application/octet-stream
+    let file_part = reqwest::multipart::Part::bytes(b"binary data".to_vec())
+        .file_name("data.bin")
+        .mime_str("application/octet-stream")
+        .unwrap();
+
+    let form = reqwest::multipart::Form::new()
+        .part("file", file_part)
+        .text("filename", "data.bin");
+
     let resp = client
-        .post(server.url("/admin/credentials"))
-        .header("Authorization", format!("Bearer {}", server.admin_token))
-        .json(&serde_json::json!({
-            "id": "new_cred",
-            "adapter": "generic",
-            "token": "token",
-            "route": {}
-        }))
+        .post(server.url("/api/v1/files"))
+        .header("Authorization", format!("Bearer {}", server.send_token))
+        .multipart(form)
         .send()
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), 500); // Internal error for duplicate
+    assert_eq!(resp.status(), 200);
 
-    // Cleanup
-    let _ = std::fs::remove_file(&config_path);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["mime_type"], "application/octet-stream");
+}
+
+#[tokio::test]
+async fn test_file_download_not_found() {
+    let port = find_available_port().await;
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let server = TestServer::new(test_config_with_file_cache(
+        port,
+        &temp_dir.path().to_string_lossy(),
+    ))
+    .await;
+    let client = server.client();
+
+    // Try to download non-existent file (no auth needed)
+    let resp = client
+        .get(server.url("/files/f_nonexistent"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn test_file_upload_no_file_cache() {
+    let port = find_available_port().await;
+    // Use config without file cache
+    let server = TestServer::new(test_config(port)).await;
+    let client = server.client();
+
+    let file_part = reqwest::multipart::Part::bytes(b"data".to_vec())
+        .file_name("test.txt")
+        .mime_str("text/plain")
+        .unwrap();
+
+    let form = reqwest::multipart::Form::new()
+        .part("file", file_part)
+        .text("filename", "test.txt");
+
+    let resp = client
+        .post(server.url("/api/v1/files"))
+        .header("Authorization", format!("Bearer {}", server.send_token))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 500);
 }
 
 #[tokio::test]
