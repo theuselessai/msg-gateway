@@ -199,8 +199,9 @@ function validateFilePath(filePath: string): boolean {
     log(`Rejected non-absolute file path: ${filePath}`);
     return false;
   }
-  if (filePath.includes("..")) {
-    log(`Rejected path traversal attempt: ${filePath}`);
+  const normalized = path.resolve(filePath);
+  if (normalized !== filePath) {
+    log(`Rejected path with traversal or special sequences: ${filePath}`);
     return false;
   }
   return true;
