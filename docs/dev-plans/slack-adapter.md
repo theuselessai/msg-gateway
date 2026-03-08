@@ -129,7 +129,7 @@ The bot token (`xoxb-...`) comes from `CREDENTIAL_TOKEN` as usual.
 **Bolt app setup:**
 
 ```typescript
-import { App } from "@slack/bolt";
+import { App, LogLevel } from "@slack/bolt";
 
 const boltApp = new App({
   token: CREDENTIAL_TOKEN,           // xoxb-... bot token
@@ -227,7 +227,7 @@ from: {
      thread_ts: body.extra_data?.thread_ts as string | undefined,
    });
    ```
-   For multiple files, call `uploadV2` once per file. The first file gets `initial_comment` with the text; subsequent files get no comment. Return the `ts` from the first successful upload.
+   For multiple files, call `uploadV2` once per file. The first file gets `initial_comment` with the text; subsequent files get no comment. Note: `files.uploadV2` returns `{ ok: true, files: [...] }` — not a top-level `ts`. Use `result.files?.[0]?.id` as the message identifier, or send text separately via `chat.postMessage` (which does return `ts`) and attach files afterward.
 
 4. Reply handling: If `reply_to_message_id` is set, pass it as `thread_ts` in `chat.postMessage`. This posts into the thread.
 

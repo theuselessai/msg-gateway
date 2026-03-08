@@ -161,7 +161,7 @@ Message content extraction:
 `extra_data` to populate:
 ```typescript
 extra_data: {
-  thread_id: message.channelId !== message.channel.id ? message.channelId : undefined,
+   thread_id: message.channel.isThread() ? message.channelId : undefined,
   guild_id: message.guildId ?? undefined,
   channel_name: message.channel.isTextBased() && 'name' in message.channel
     ? message.channel.name
@@ -196,7 +196,10 @@ File handling: Discord CDN URLs are publicly accessible without auth headers. Pa
 
 3. Text-only send:
    ```typescript
-   const sent = await channel.send({ content: text, reply: replyMessage ? { messageReference: replyMessage } : undefined });
+   const sent = await channel.send({
+     content: text,
+     messageReference: replyMessage ? { messageId: replyMessage.id } : undefined,
+   });
    ```
 
 4. File sends: Read each file path from disk (validate with `validateFilePath` — copy from Telegram). Build an `AttachmentBuilder` array:
@@ -210,7 +213,7 @@ File handling: Discord CDN URLs are publicly accessible without auth headers. Pa
 
 `extra_data` consumption: The outbound handler can optionally read `body.extra_data?.thread_id` to send into a thread instead of the parent channel. If `thread_id` is present, fetch that channel ID instead of `chat_id`.
 
-Rate limits: Discord allows 5 `sendMessage` calls per 5 seconds per channel. discord.js has a built-in rate limit queue — do not implement manual throttling. The `retry()` helper handles transient 429s if discord.js surfaces them as errors.
+Rate limits: Discord allows 5 `send` calls per 5 seconds per channel. discord.js has a built-in rate limit queue — do not implement manual throttling. The `retry()` helper handles transient 429s if discord.js surfaces them as errors.
 
 ### 4. Platform-Specific Considerations
 
@@ -344,7 +347,7 @@ Add to `config.example.json` under `credentials`:
 }
 ```
 
-Note: `DISCORD_BOT_TOKEN` should be the full bot token (without the `Bot ` prefix — discord.js adds that automatically).
+Note: `DISCORD_BOT_TOKEN` should be the raw bot token (without the `Bot ` prefix — discord.js strips it automatically if present).
 
 ## Checklist
 
