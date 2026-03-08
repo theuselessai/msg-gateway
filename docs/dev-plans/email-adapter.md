@@ -275,6 +275,8 @@ async function processEmail(rawSource: Buffer, uid: number): Promise<void> {
 **`saveTempFile()` helper:**
 ```typescript
 import * as crypto from "crypto";
+import * as path from "path";
+import * as fs from "fs";
 import * as os from "os";
 
 async function saveTempFile(attachment: Attachment): Promise<string> {
@@ -333,7 +335,7 @@ async function saveTempFile(attachment: Attachment): Promise<string> {
 
 5. File attachments: For each path in `body.file_paths`, validate with `validateFilePath()` (copy from Telegram), read the buffer, and add to `mailOptions.attachments`:
    ```typescript
-   mailOptions.attachments = filePaths.map(fp => ({
+   mailOptions.attachments = (body.file_paths ?? []).map(fp => ({
      filename: path.basename(fp),
      path: fp,
    }));

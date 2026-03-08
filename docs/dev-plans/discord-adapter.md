@@ -161,7 +161,7 @@ Message content extraction:
 `extra_data` to populate:
 ```typescript
 extra_data: {
-   thread_id: message.channel.isThread() ? message.channelId : undefined,
+  thread_id: message.channel.isThread() ? message.channelId : undefined,
   guild_id: message.guildId ?? undefined,
   channel_name: message.channel.isTextBased() && 'name' in message.channel
     ? message.channel.name
@@ -313,7 +313,7 @@ async startWithDiscord(options: {
 
   await this.addCredential("discord_test", {
     adapter: "discord",
-    token: "Bot test-token",
+    token: "test-token",
     active: true,
     config: {
       guild_ids: options.guildIds,

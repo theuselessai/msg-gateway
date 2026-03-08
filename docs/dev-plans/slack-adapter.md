@@ -144,7 +144,9 @@ const boltApp = new App({
 ```typescript
 boltApp.message(async ({ message, client }) => {
   // message is typed as GenericMessageEvent | BotMessageEvent | ...
-  // Cast to the common shape we need
+  // Define a local SlackMessage interface with the fields we need:
+  //   { channel: string; ts: string; text?: string; user?: string; thread_ts?: string;
+  //     subtype?: string; bot_id?: string; files?: SlackFile[]; team?: string }
   const msg = message as SlackMessage;
 
   // Skip bot messages
@@ -217,21 +219,33 @@ from: {
    return result.ts!;
    ```
 
-3. File sends: Use `client.files.uploadV2()` (the v2 API, not the deprecated `files.upload`):
+3. File sends: Send text first via `chat.postMessage` to get a `ts`, then upload files into that message's thread:
    ```typescript
-   const result = await boltApp.client.files.uploadV2({
-     channel_id: body.chat_id,
-     file: fileBuffer,
-     filename: filename,
-     initial_comment: body.text,  // text as the file comment
+   // Step 1: Post the text message (returns ts)
+   const textResult = await boltApp.client.chat.postMessage({
+     channel: body.chat_id,
+     text: body.text || "Attached files",
      thread_ts: body.extra_data?.thread_ts as string | undefined,
    });
+   const ts = textResult.ts!;
+
+   // Step 2: Upload files into the thread
+   for (const filePath of body.file_paths ?? []) {
+     const fileBuffer = await fs.promises.readFile(filePath);
+     await boltApp.client.files.uploadV2({
+       channel_id: body.chat_id,
+       file: fileBuffer,
+       filename: path.basename(filePath),
+       thread_ts: ts,  // attach to the text message's thread
+     });
+   }
+   return ts;
    ```
-   For multiple files, call `uploadV2` once per file. The first file gets `initial_comment` with the text; subsequent files get no comment. Note: `files.uploadV2` returns `{ ok: true, files: [...] }` — not a top-level `ts`. Use `result.files?.[0]?.id` as the message identifier, or send text separately via `chat.postMessage` (which does return `ts`) and attach files afterward.
+   This ensures we always have a `ts` to return as `protocol_message_id`. The `files.uploadV2` method returns `{ ok: true, files: [...] }` — not a `ts` — so we use `chat.postMessage` as the anchor.
 
 4. Reply handling: If `reply_to_message_id` is set, pass it as `thread_ts` in `chat.postMessage`. This posts into the thread.
 
-5. Return `{ protocol_message_id: ts }` where `ts` is the Slack message timestamp.
+5. Return `{ protocol_message_id: ts }` where `ts` is the Slack message timestamp from `chat.postMessage`.
 
 Rate limits: `chat.postMessage` is a Tier 3 method (~1 req/sec burst). Bolt's built-in retry handler manages 429 responses automatically. The `retry()` helper is still useful for network errors.
 
