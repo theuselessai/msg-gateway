@@ -27,17 +27,40 @@ msg-gateway is the unified messaging layer for Pipelit and other LLM-based appli
 
 ### Tasks
 
-| # | Issue | Task | Priority | Estimate | Status |
-|---|-------|------|----------|----------|--------|
-| 1 | #15 | Message Format Redesign (core fields, files[], extra_data) | P0 | 2-3 days | Planned |
-| 2 | #16 | File Upload API (POST /api/v1/files) | P0 | 1-2 days | Planned |
-| 3 | #12 | E2E Test Framework (Cucumber-JS) | P0 | 3-4 days | Planned |
-| 4 | #13 | Telegram Adapter → Node.js | P0 | 2-3 days | Planned |
-| 5 | #17 | Generic Adapter File Support | P1 | 1-2 days | Planned |
-| 6 | #11 | Email Adapter (Node.js) | P1 | 5-7 days | Planned |
-| 7 | #10 | Slack Adapter (Node.js) | P1 | 3-5 days | Planned |
-| 8 | #9 | Discord Adapter (Node.js) | P1 | 3-5 days | Planned |
-| 9 | | Protocol Documentation | P1 | 1 day | Planned |
+| Order | Issue | Task | Priority | Estimate | Blocked By | Status |
+|-------|-------|------|----------|----------|------------|--------|
+| 1 | #15 | Message Format Redesign (core fields, files[], extra_data) | P0 | 2-3 days | — | Planned |
+| 2 | #16 | File Upload API (POST /api/v1/files) | P0 | 1-2 days | #15 | Planned |
+| 3 | #12 | E2E Test Framework (Cucumber-JS) | P0 | 3-4 days | #15 | Planned |
+| 4 | #13 | Telegram Adapter → Node.js | P0 | 2-3 days | #15, #12 | Planned |
+| 5 | #17 | Generic Adapter File Support | P1 | 1-2 days | #15, #16 | Planned |
+| 6 | #11 | Email Adapter (Node.js) | P1 | 5-7 days | #15, #12 | Planned |
+| 7 | #10 | Slack Adapter (Node.js) | P1 | 3-5 days | #15, #12 | Planned |
+| 8 | #9 | Discord Adapter (Node.js) | P1 | 3-5 days | #15, #12 | Planned |
+| 9 | — | Protocol Documentation | P1 | 1 day | — | Planned |
+
+### Dependency Graph
+
+```
+#15 Message Format Redesign
+ ├──▶ #16 File Upload API
+ │     └──▶ #17 Generic Adapter File Support
+ ├──▶ #12 E2E Test Framework
+ │     ├──▶ #13 Telegram → Node.js
+ │     ├──▶ #11 Email Adapter
+ │     ├──▶ #10 Slack Adapter
+ │     └──▶ #9  Discord Adapter
+ └──▶ #8  Pipelit Integration (v0.3.0)
+```
+
+### Phases
+
+**Phase 1 — Foundation** (`phase:1-foundation`)
+- #15 → #16 → #17: Message format, file API, generic adapter files
+- #12: E2E test framework (can run in parallel with #16)
+
+**Phase 2 — Adapters** (`phase:2-adapters`)
+- #13, #11, #10, #9: All adapter work (depends on Phase 1)
 
 ### Technical Decisions
 
@@ -56,20 +79,20 @@ msg-gateway is the unified messaging layer for Pipelit and other LLM-based appli
 ### Milestones
 
 ```
-Week 1: E2E Framework + Telegram Migration
-  └── Cucumber-JS setup with basic scenarios
-  └── Telegram adapter rewritten in Node.js
-  └── CI integration for E2E tests
+Week 1: Phase 1 — Foundation
+  ├── #15 Message Format Redesign (Rust structs + server logic)
+  ├── #16 File Upload API
+  ├── #12 E2E Test Framework (Cucumber-JS setup + CI)
+  └── #17 Generic Adapter File Support
 
-Week 2-3: Email + Slack Adapters
-  └── Email adapter (IMAP/SMTP)
-  └── Slack adapter (Events API)
-  └── E2E tests for both
+Week 2: Phase 2a — Telegram Migration
+  └── #13 Telegram Adapter → Node.js (first adapter on new format)
 
-Week 4: Discord + Documentation
-  └── Discord adapter (discord.js)
-  └── Protocol documentation complete
-  └── v0.2.0 release
+Week 3-4: Phase 2b — New Adapters
+  ├── #11 Email Adapter (IMAP/SMTP)
+  ├── #10 Slack Adapter (Events API)
+  ├── #9  Discord Adapter (discord.js)
+  └── Protocol Documentation
 ```
 
 ## v0.3.0 - Pipelit Integration (Target: May 2026)
