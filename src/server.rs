@@ -301,7 +301,21 @@ async fn send_message(
 
     let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or(""); // Text is optional when sending file
 
-    // Parse optional file attachment
+    // Parse optional extra_data (pass through transparently)
+    let extra_data: Option<serde_json::Value> = payload.get("extra_data").cloned();
+
+    // Parse file_ids (v0.2+) — references to files already uploaded via POST /api/v1/files
+    let file_ids: Vec<String> = payload
+        .get("file_ids")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Parse optional file attachment (v0.1 compat — single file download)
     let file_attachment: Option<SendFileAttachment> = payload
         .get("file")
         .and_then(|v| serde_json::from_value(v.clone()).ok());
@@ -322,7 +336,22 @@ async fn send_message(
     let message_id = format!("{}_{}", adapter, uuid::Uuid::new_v4());
     let timestamp = chrono::Utc::now();
 
-    // Handle file attachment: download and cache
+    // Resolve file_ids to local file paths
+    let mut file_paths: Vec<String> = Vec::new();
+
+    for file_id in &file_ids {
+        if let Some(ref file_cache) = state.file_cache {
+            if let Some(path) = file_cache.get_file_path(file_id).await {
+                file_paths.push(path.to_string_lossy().to_string());
+            } else {
+                return Err(AppError::NotFound(format!("File not found: {}", file_id)));
+            }
+        } else {
+            return Err(AppError::Internal("File cache not configured".to_string()));
+        }
+    }
+
+    // Handle legacy file attachment (v0.1 compat): download and cache
     let file_path: Option<String> = if let Some(file) = file_attachment {
         if let Some(ref file_cache) = state.file_cache {
             match file_cache
@@ -400,6 +429,8 @@ async fn send_message(
                         .and_then(|v| v.as_str())
                         .map(String::from),
                     file_path: file_path.clone(),
+                    file_paths: file_paths.clone(),
+                    extra_data: extra_data.clone(),
                 };
 
                 let client = reqwest::Client::new();
@@ -509,9 +540,18 @@ async fn adapter_inbound(
         .map(|dt| dt.with_timezone(&chrono::Utc))
         .unwrap_or_else(chrono::Utc::now);
 
-    // Handle file attachment if present
+    // Collect all file infos: merge v0.2 `files[]` with v0.1 compat `file`
+    let mut all_files: Vec<&crate::adapter::AdapterFileInfo> = payload.files.iter().collect();
+    if let Some(ref legacy_file) = payload.file
+        && all_files.is_empty()
+    {
+        // Only use legacy `file` if `files[]` is not provided
+        all_files.push(legacy_file);
+    }
+
+    // Handle file attachments
     let mut attachments = vec![];
-    if let Some(ref file_info) = payload.file {
+    for file_info in &all_files {
         if let Some(ref file_cache) = state.file_cache {
             match file_cache
                 .download_and_cache(
@@ -562,6 +602,7 @@ async fn adapter_inbound(
             protocol: adapter.clone(),
             chat_id: payload.chat_id.clone(),
             message_id: payload.message_id.clone(),
+            reply_to_message_id: payload.reply_to_message_id,
             from: crate::message::UserInfo {
                 id: payload.from.id,
                 username: payload.from.username,
@@ -571,6 +612,7 @@ async fn adapter_inbound(
         text: payload.text,
         attachments,
         timestamp,
+        extra_data: payload.extra_data,
     };
 
     // Check health state

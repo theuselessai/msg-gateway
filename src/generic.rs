@@ -120,6 +120,7 @@ pub async fn chat_inbound(
             protocol: "generic".to_string(),
             chat_id: payload.chat_id.clone(),
             message_id: message_id.clone(),
+            reply_to_message_id: None,
             from: UserInfo {
                 id: payload.from.id,
                 username: None,
@@ -129,6 +130,7 @@ pub async fn chat_inbound(
         text: payload.text,
         attachments: vec![],
         timestamp,
+        extra_data: None,
     };
 
     // Check if target server is down - buffer message instead of forwarding
