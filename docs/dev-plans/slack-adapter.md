@@ -278,7 +278,7 @@ Rate limits: `chat.postMessage` is a Tier 3 method (~1 req/sec burst). Bolt's bu
 The mock server simulates the Slack Web API endpoints that the adapter calls:
 
 - `POST /api/chat.postMessage` — records the call, returns `{"ok": true, "ts": "1234567890.123456"}`
-- `POST /api/files.uploadV2` — records the call, returns `{"ok": true, "files": [{"id": "F123", "ts": "1234567890.123456"}]}`
+- `POST /api/files.uploadV2` — records the call, returns `{"ok": true, "files": [{"id": "F123"}]}`
 - `GET /api/users.info` — returns a mock user object
 - `GET /api/conversations.info` — returns a mock channel object
 
