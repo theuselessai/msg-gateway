@@ -124,3 +124,12 @@ Then(
     expect(msg.text).to.equal(expectedText);
   }
 );
+
+Then(
+  'the response body status should be {string}',
+  function (this: TestWorld, expected: string) {
+    expect(this.lastResponseBody).to.not.be.null;
+    const body = this.lastResponseBody as Record<string, unknown>;
+    expect(body.status).to.equal(expected);
+  }
+);
