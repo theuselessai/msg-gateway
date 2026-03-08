@@ -38,8 +38,7 @@ When(
       if (log.filter(m => m === 'getUpdates').length >= 2) break;
       await new Promise(r => setTimeout(r, 200));
     }
-    const log2 = this.mockTelegramServer!.requestLog;
-    if (log2.filter(m => m === 'getUpdates').length < 2) {
+    if (this.mockTelegramServer!.requestLog.filter(m => m === 'getUpdates').length < 2) {
       throw new Error('Telegram adapter did not start polling within 5000ms');
     }
     this.mockTelegramServer!.injectTextMessage(chatId, text, {

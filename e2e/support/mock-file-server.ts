@@ -7,8 +7,9 @@ export class MockFileServer {
   constructor() {
     this.server = http.createServer((req, res) => {
       if (req.method === 'GET' && req.url === '/test.txt') {
-        res.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Length': '11' });
-        res.end('hello world');
+        const content = 'hello world';
+        res.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Length': String(Buffer.byteLength(content)) });
+        res.end(content);
       } else {
         res.writeHead(404);
         res.end('not found');

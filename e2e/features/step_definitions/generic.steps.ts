@@ -41,6 +41,7 @@ When(
 Then(
   'the received message should have {int} attachment(s)',
   function (this: TestWorld, count: number) {
+    expect(this.lastBackendMessage, 'lastBackendMessage is not set').to.exist;
     const msg = this.lastBackendMessage as Record<string, unknown>;
     const attachments = msg.attachments as unknown[];
     expect(attachments).to.be.an('array');
@@ -51,6 +52,7 @@ Then(
 Then(
   'the attachment filename should be {string}',
   function (this: TestWorld, expected: string) {
+    expect(this.lastBackendMessage, 'lastBackendMessage is not set').to.exist;
     const msg = this.lastBackendMessage as Record<string, unknown>;
     const attachments = msg.attachments as Array<Record<string, unknown>>;
     expect(attachments).to.be.an('array').with.length.at.least(1);
@@ -61,6 +63,7 @@ Then(
 Then(
   'the attachment mime_type should be {string}',
   function (this: TestWorld, expected: string) {
+    expect(this.lastBackendMessage, 'lastBackendMessage is not set').to.exist;
     const msg = this.lastBackendMessage as Record<string, unknown>;
     const attachments = msg.attachments as Array<Record<string, unknown>>;
     expect(attachments).to.be.an('array').with.length.at.least(1);
