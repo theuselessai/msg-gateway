@@ -376,3 +376,356 @@ async fn write_config(state: &AppState) -> Result<(), AppError> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{BackendProtocol, TargetConfig};
+
+    // ==================== Request/Response Struct Tests ====================
+
+    #[test]
+    fn test_create_credential_request_parse_minimal() {
+        let json = r#"{
+            "id": "test_cred",
+            "adapter": "telegram",
+            "token": "secret123",
+            "route": {"type": "default"}
+        }"#;
+
+        let req: CreateCredentialRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.id, "test_cred");
+        assert_eq!(req.adapter, "telegram");
+        assert_eq!(req.token, "secret123");
+        assert!(req.active); // default is true
+        assert!(!req.emergency); // default is false
+        assert!(req.config.is_none());
+        assert!(req.target.is_none());
+    }
+
+    #[test]
+    fn test_create_credential_request_parse_full() {
+        let json = r#"{
+            "id": "test_cred",
+            "adapter": "telegram",
+            "token": "secret123",
+            "active": false,
+            "emergency": true,
+            "config": {"chat_id": "123"},
+            "target": {
+                "protocol": "pipelit",
+                "inbound_url": "http://localhost:8000/inbound",
+                "token": "backend_token"
+            },
+            "route": {"type": "custom", "path": "/api"}
+        }"#;
+
+        let req: CreateCredentialRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.id, "test_cred");
+        assert!(!req.active);
+        assert!(req.emergency);
+        assert!(req.config.is_some());
+        assert!(req.target.is_some());
+    }
+
+    #[test]
+    fn test_update_credential_request_parse_empty() {
+        let json = r#"{}"#;
+
+        let req: UpdateCredentialRequest = serde_json::from_str(json).unwrap();
+        assert!(req.adapter.is_none());
+        assert!(req.token.is_none());
+        assert!(req.active.is_none());
+        assert!(req.emergency.is_none());
+        assert!(req.config.is_none());
+        assert!(req.target.is_none());
+        assert!(req.route.is_none());
+    }
+
+    #[test]
+    fn test_update_credential_request_parse_partial() {
+        let json = r#"{
+            "active": true,
+            "token": "new_token"
+        }"#;
+
+        let req: UpdateCredentialRequest = serde_json::from_str(json).unwrap();
+        assert!(req.adapter.is_none());
+        assert_eq!(req.token, Some("new_token".to_string()));
+        assert_eq!(req.active, Some(true));
+        assert!(req.emergency.is_none());
+    }
+
+    #[test]
+    fn test_update_credential_request_parse_full() {
+        let json = r#"{
+            "adapter": "discord",
+            "token": "new_token",
+            "active": false,
+            "emergency": true,
+            "config": {"setting": "value"},
+            "target": {
+                "protocol": "opencode",
+                "base_url": "http://localhost:9000",
+                "token": "backend_token"
+            },
+            "route": {"new": "route"}
+        }"#;
+
+        let req: UpdateCredentialRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.adapter, Some("discord".to_string()));
+        assert_eq!(req.token, Some("new_token".to_string()));
+        assert_eq!(req.active, Some(false));
+        assert_eq!(req.emergency, Some(true));
+        assert!(req.config.is_some());
+        assert!(req.target.is_some());
+        assert!(req.route.is_some());
+    }
+
+    #[test]
+    fn test_credential_response_serialize() {
+        let response = CredentialResponse {
+            id: "cred1".to_string(),
+            adapter: "telegram".to_string(),
+            active: true,
+            emergency: false,
+            config: Some(serde_json::json!({"key": "value"})),
+            route: serde_json::json!({"type": "default"}),
+            instance_status: Some("Running".to_string()),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"id\":\"cred1\""));
+        assert!(json.contains("\"adapter\":\"telegram\""));
+        assert!(json.contains("\"active\":true"));
+        assert!(json.contains("\"emergency\":false"));
+        assert!(json.contains("\"instance_status\":\"Running\""));
+    }
+
+    #[test]
+    fn test_credential_response_serialize_minimal() {
+        let response = CredentialResponse {
+            id: "cred2".to_string(),
+            adapter: "generic".to_string(),
+            active: false,
+            emergency: true,
+            config: None,
+            route: serde_json::json!(null),
+            instance_status: None,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"id\":\"cred2\""));
+        assert!(json.contains("\"config\":null"));
+        assert!(json.contains("\"instance_status\":null"));
+    }
+
+    #[test]
+    fn test_default_true() {
+        assert!(default_true());
+    }
+
+    // ==================== Debug Trait Tests ====================
+
+    #[test]
+    fn test_create_credential_request_debug() {
+        let req = CreateCredentialRequest {
+            id: "test".to_string(),
+            adapter: "telegram".to_string(),
+            token: "secret".to_string(),
+            active: true,
+            emergency: false,
+            config: None,
+            target: None,
+            route: serde_json::json!({}),
+        };
+
+        let debug_str = format!("{:?}", req);
+        assert!(debug_str.contains("CreateCredentialRequest"));
+        assert!(debug_str.contains("test"));
+    }
+
+    #[test]
+    fn test_update_credential_request_debug() {
+        let req = UpdateCredentialRequest {
+            adapter: Some("discord".to_string()),
+            token: None,
+            active: Some(true),
+            emergency: None,
+            config: None,
+            target: None,
+            route: None,
+        };
+
+        let debug_str = format!("{:?}", req);
+        assert!(debug_str.contains("UpdateCredentialRequest"));
+        assert!(debug_str.contains("discord"));
+    }
+
+    #[test]
+    fn test_credential_response_debug() {
+        let response = CredentialResponse {
+            id: "cred1".to_string(),
+            adapter: "telegram".to_string(),
+            active: true,
+            emergency: false,
+            config: None,
+            route: serde_json::json!({}),
+            instance_status: None,
+        };
+
+        let debug_str = format!("{:?}", response);
+        assert!(debug_str.contains("CredentialResponse"));
+        assert!(debug_str.contains("cred1"));
+    }
+
+    // ==================== Target Config in Requests ====================
+
+    #[test]
+    fn test_create_request_with_pipelit_target() {
+        let json = r#"{
+            "id": "test",
+            "adapter": "telegram",
+            "token": "tok",
+            "route": {},
+            "target": {
+                "protocol": "pipelit",
+                "inbound_url": "http://localhost:8000/inbound",
+                "token": "backend_token"
+            }
+        }"#;
+
+        let req: CreateCredentialRequest = serde_json::from_str(json).unwrap();
+        let target = req.target.unwrap();
+        assert!(matches!(target.protocol, BackendProtocol::Pipelit));
+        assert_eq!(
+            target.inbound_url,
+            Some("http://localhost:8000/inbound".to_string())
+        );
+    }
+
+    #[test]
+    fn test_create_request_with_opencode_target() {
+        let json = r#"{
+            "id": "test",
+            "adapter": "generic",
+            "token": "tok",
+            "route": {},
+            "target": {
+                "protocol": "opencode",
+                "base_url": "http://localhost:9000",
+                "token": "backend_token"
+            }
+        }"#;
+
+        let req: CreateCredentialRequest = serde_json::from_str(json).unwrap();
+        let target = req.target.unwrap();
+        assert!(matches!(target.protocol, BackendProtocol::Opencode));
+        assert_eq!(target.base_url, Some("http://localhost:9000".to_string()));
+    }
+
+    // ==================== Helper Function Tests ====================
+
+    #[tokio::test]
+    async fn test_set_skip_reload() {
+        use std::time::Instant;
+        use tokio::sync::RwLock;
+
+        // Create minimal AppState-like structure for testing
+        let skip_reload_until: RwLock<Option<Instant>> = RwLock::new(None);
+
+        // Initially should be None
+        assert!(skip_reload_until.read().await.is_none());
+
+        // Simulate set_skip_reload behavior
+        {
+            use std::time::Duration;
+            let mut skip_until = skip_reload_until.write().await;
+            *skip_until = Some(Instant::now() + Duration::from_secs(2));
+        }
+
+        // Should now be Some
+        let value = skip_reload_until.read().await;
+        assert!(value.is_some());
+        // Should be in the future
+        assert!(value.unwrap() > Instant::now());
+    }
+
+    // ==================== Config Validation Tests ====================
+
+    #[test]
+    fn test_credential_config_from_create_request() {
+        let req = CreateCredentialRequest {
+            id: "test_id".to_string(),
+            adapter: "telegram".to_string(),
+            token: "test_token".to_string(),
+            active: true,
+            emergency: true,
+            config: Some(serde_json::json!({"key": "value"})),
+            target: Some(TargetConfig {
+                protocol: BackendProtocol::Pipelit,
+                inbound_url: Some("http://localhost/in".to_string()),
+                base_url: None,
+                token: "backend_token".to_string(),
+                poll_interval_ms: None,
+            }),
+            route: serde_json::json!({"route": "data"}),
+        };
+
+        // Convert to CredentialConfig (as done in create_credential)
+        let cred_config = CredentialConfig {
+            adapter: req.adapter.clone(),
+            token: req.token.clone(),
+            active: req.active,
+            emergency: req.emergency,
+            config: req.config.clone(),
+            target: req.target.clone(),
+            route: req.route.clone(),
+        };
+
+        assert_eq!(cred_config.adapter, "telegram");
+        assert_eq!(cred_config.token, "test_token");
+        assert!(cred_config.active);
+        assert!(cred_config.emergency);
+        assert!(cred_config.config.is_some());
+        assert!(cred_config.target.is_some());
+    }
+
+    #[test]
+    fn test_update_applies_partial_changes() {
+        // Start with a credential config
+        let mut cred = CredentialConfig {
+            adapter: "telegram".to_string(),
+            token: "old_token".to_string(),
+            active: true,
+            emergency: false,
+            config: None,
+            target: None,
+            route: serde_json::json!({"old": "route"}),
+        };
+
+        // Partial update
+        let update = UpdateCredentialRequest {
+            adapter: None,
+            token: Some("new_token".to_string()),
+            active: Some(false),
+            emergency: None,
+            config: None,
+            target: None,
+            route: None,
+        };
+
+        // Apply updates (simulating update_credential logic)
+        if let Some(token) = update.token {
+            cred.token = token;
+        }
+        if let Some(active) = update.active {
+            cred.active = active;
+        }
+
+        assert_eq!(cred.adapter, "telegram"); // unchanged
+        assert_eq!(cred.token, "new_token"); // changed
+        assert!(!cred.active); // changed
+        assert!(!cred.emergency); // unchanged
+    }
+}

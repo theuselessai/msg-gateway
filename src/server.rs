@@ -733,4 +733,77 @@ mod tests {
             r#"attachment; filename="document.pdf""#
         );
     }
+
+    #[test]
+    fn test_send_file_attachment_missing_optional() {
+        // auth_header is optional
+        let json = r#"{
+            "url": "https://example.com/file.txt",
+            "filename": "test.txt",
+            "mime_type": "text/plain"
+        }"#;
+
+        let attachment: SendFileAttachment = serde_json::from_str(json).unwrap();
+        assert!(attachment.auth_header.is_none());
+    }
+
+    #[test]
+    fn test_send_file_attachment_debug() {
+        let attachment = SendFileAttachment {
+            url: "https://example.com/file.pdf".to_string(),
+            filename: "doc.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+            auth_header: None,
+        };
+
+        let debug_str = format!("{:?}", attachment);
+        assert!(debug_str.contains("SendFileAttachment"));
+        assert!(debug_str.contains("doc.pdf"));
+    }
+
+    #[test]
+    fn test_content_disposition_special_chars() {
+        // Test with special characters in filename
+        let filename = "file with spaces.pdf";
+        let content_disposition = format!(
+            "attachment; filename=\"{}\"",
+            filename.replace("\"", "\\\"")
+        );
+        assert_eq!(
+            content_disposition,
+            r#"attachment; filename="file with spaces.pdf""#
+        );
+    }
+
+    #[test]
+    fn test_content_disposition_unicode() {
+        // Test with unicode characters
+        let filename = "文档.pdf";
+        let content_disposition = format!(
+            "attachment; filename=\"{}\"",
+            filename.replace("\"", "\\\"")
+        );
+        assert!(content_disposition.contains("文档.pdf"));
+    }
+
+    #[test]
+    fn test_send_file_attachment_various_mime_types() {
+        let test_cases = vec![
+            ("image/png", "image.png"),
+            ("video/mp4", "video.mp4"),
+            ("audio/mpeg", "audio.mp3"),
+            ("application/json", "data.json"),
+            ("text/html", "page.html"),
+        ];
+
+        for (mime_type, filename) in test_cases {
+            let json = format!(
+                r#"{{"url": "https://example.com/{}", "filename": "{}", "mime_type": "{}"}}"#,
+                filename, filename, mime_type
+            );
+            let attachment: SendFileAttachment = serde_json::from_str(&json).unwrap();
+            assert_eq!(attachment.mime_type, mime_type);
+            assert_eq!(attachment.filename, filename);
+        }
+    }
 }
