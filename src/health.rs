@@ -514,7 +514,8 @@ mod tests {
         monitor.record_success().await;
         let duration2 = monitor.last_healthy_ago().await;
         assert!(duration2.is_some());
-        assert!(duration2.unwrap().as_millis() < 50);
+        // Use lenient threshold to avoid flaky tests on slow/busy systems
+        assert!(duration2.unwrap().as_millis() < 500);
     }
 
     #[tokio::test]
@@ -530,10 +531,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::clone_on_copy)]
     async fn test_health_state_clone_copy() {
         // Test Clone and Copy implementations
         let state = HealthState::Healthy;
-        let cloned = state.clone();
+        let cloned = state.clone(); // Intentionally testing clone on Copy type
         let copied = state;
 
         assert_eq!(state, cloned);
