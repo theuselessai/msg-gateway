@@ -1074,7 +1074,7 @@ async fn test_generic_inbound_with_file_success() {
 }
 
 /// Test 2: Generic inbound with file — download fails (URL unreachable).
-/// Gateway still returns 202 (non-fatal), backend receives attachment with download_url starting with "error:".
+/// Gateway still returns 202 (non-fatal), backend receives message with NO attachments (failed ones are skipped).
 #[tokio::test]
 async fn test_generic_inbound_with_file_download_failure() {
     // Use a port with nothing listening to simulate a 404/connection refused
@@ -1113,21 +1113,20 @@ async fn test_generic_inbound_with_file_download_failure() {
     // Should still return 202 — file errors are non-fatal
     assert_eq!(resp.status(), 202);
 
-    // Backend should still receive the message with an error attachment
+    // Backend should still receive the message but with NO attachments (failed ones are skipped)
     let body = tokio::time::timeout(std::time::Duration::from_secs(5), backend_rx)
         .await
         .expect("Timed out waiting for backend")
         .expect("Backend receiver dropped");
 
-    let attachments = body["attachments"].as_array().expect("attachments array");
-    assert_eq!(attachments.len(), 1, "Expected 1 attachment (error stub)");
-    let download_url = attachments[0]["download_url"]
-        .as_str()
-        .expect("download_url string");
-    assert!(
-        download_url.starts_with("error:"),
-        "Expected download_url to start with 'error:', got: {}",
-        download_url
+    let attachments = body
+        .get("attachments")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    assert_eq!(
+        attachments, 0,
+        "Expected 0 attachments (failed file was skipped)"
     );
 }
 

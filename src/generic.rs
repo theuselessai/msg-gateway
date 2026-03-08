@@ -125,46 +125,46 @@ pub async fn chat_inbound(
 
     // Download and cache file attachments
     let mut attachments = vec![];
+
+    // Warn once if files present but cache not configured
+    if state.file_cache.is_none() && !payload.files.is_empty() {
+        tracing::warn!("Files received but file cache not configured, skipping attachments");
+    }
+
     for file_ref in &payload.files {
-        if let Some(ref file_cache) = state.file_cache {
-            match file_cache
-                .download_and_cache(
-                    &file_ref.url,
-                    file_ref.auth_header.as_deref(),
-                    &file_ref.filename,
-                    &file_ref.mime_type,
-                )
-                .await
-            {
-                Ok(cached) => {
-                    attachments.push(crate::message::Attachment {
-                        filename: cached.filename.clone(),
-                        mime_type: cached.mime_type.clone(),
-                        size_bytes: cached.size_bytes,
-                        download_url: file_cache.get_download_url(&cached.file_id),
-                    });
-                    tracing::info!(
-                        file_id = %cached.file_id,
-                        filename = %cached.filename,
-                        "Generic inbound file cached"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        url = %file_ref.url,
-                        error = %e,
-                        "Failed to cache generic inbound file attachment"
-                    );
-                    attachments.push(crate::message::Attachment {
-                        filename: file_ref.filename.clone(),
-                        mime_type: file_ref.mime_type.clone(),
-                        size_bytes: 0,
-                        download_url: format!("error: {}", e),
-                    });
-                }
+        let Some(ref file_cache) = state.file_cache else {
+            continue;
+        };
+
+        match file_cache
+            .download_and_cache(
+                &file_ref.url,
+                file_ref.auth_header.as_deref(),
+                &file_ref.filename,
+                &file_ref.mime_type,
+            )
+            .await
+        {
+            Ok(cached) => {
+                attachments.push(crate::message::Attachment {
+                    filename: cached.filename.clone(),
+                    mime_type: cached.mime_type.clone(),
+                    size_bytes: cached.size_bytes,
+                    download_url: file_cache.get_download_url(&cached.file_id),
+                });
+                tracing::info!(
+                    file_id = %cached.file_id,
+                    filename = %cached.filename,
+                    "Generic inbound file cached"
+                );
             }
-        } else {
-            tracing::warn!("File received but file cache not configured");
+            Err(e) => {
+                tracing::warn!(
+                    url = %file_ref.url,
+                    error = %e,
+                    "Failed to cache generic inbound file attachment"
+                );
+            }
         }
     }
 
