@@ -340,52 +340,66 @@ async fn send_message(
     }
 
     // Handle legacy file attachment (v0.1 compat): download and cache
-    let file_path: Option<String> = if let Some(file) = file_attachment {
-        if let Some(ref file_cache) = state.file_cache {
-            match file_cache
-                .download_and_cache(
-                    &file.url,
-                    file.auth_header.as_deref(),
-                    &file.filename,
-                    &file.mime_type,
-                )
-                .await
-            {
-                Ok(cached) => {
-                    tracing::info!(
-                        file_id = %cached.file_id,
-                        filename = %file.filename,
-                        "Outbound file cached"
-                    );
-                    Some(cached.path.to_string_lossy().to_string())
+    let (file_path, legacy_file_id): (Option<String>, Option<String>) =
+        if let Some(file) = file_attachment {
+            if let Some(ref file_cache) = state.file_cache {
+                match file_cache
+                    .download_and_cache(
+                        &file.url,
+                        file.auth_header.as_deref(),
+                        &file.filename,
+                        &file.mime_type,
+                    )
+                    .await
+                {
+                    Ok(cached) => {
+                        tracing::info!(
+                            file_id = %cached.file_id,
+                            filename = %file.filename,
+                            "Outbound file cached"
+                        );
+                        let path = cached.path.to_string_lossy().to_string();
+                        let id = cached.file_id.clone();
+                        (Some(path), Some(id))
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            error = %e,
+                            filename = %file.filename,
+                            "Failed to cache outbound file"
+                        );
+                        return Err(AppError::Internal(format!(
+                            "Failed to download file: {}",
+                            e
+                        )));
+                    }
                 }
-                Err(e) => {
-                    tracing::error!(
-                        error = %e,
-                        filename = %file.filename,
-                        "Failed to cache outbound file"
-                    );
-                    return Err(AppError::Internal(format!(
-                        "Failed to download file: {}",
-                        e
-                    )));
-                }
+            } else {
+                tracing::warn!("File attachment in send request but file cache not configured");
+                return Err(AppError::Internal("File cache not configured".to_string()));
             }
         } else {
-            tracing::warn!("File attachment in send request but file cache not configured");
-            return Err(AppError::Internal("File cache not configured".to_string()));
-        }
-    } else {
-        None
-    };
+            (None, None)
+        };
 
     // Route to appropriate adapter
     if adapter == "generic" {
+        let mut file_urls: Vec<String> = vec![];
+        if let Some(ref fc) = state.file_cache {
+            for fid in &file_ids {
+                file_urls.push(fc.get_download_url(fid));
+            }
+            if let Some(ref fid) = legacy_file_id {
+                file_urls.push(fc.get_download_url(fid));
+            }
+        }
+
         // Built-in generic adapter: send via WebSocket
         let ws_msg = WsOutboundMessage {
             text: text.to_string(),
             timestamp,
             message_id: message_id.clone(),
+            file_urls,
         };
 
         let sent = generic::send_to_ws(&state.ws_registry, credential_id, chat_id, ws_msg).await;
