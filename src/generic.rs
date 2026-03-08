@@ -32,6 +32,8 @@ pub struct ChatRequest {
     pub chat_id: String,
     pub text: String,
     pub from: ChatUser,
+    #[serde(default)]
+    pub files: Vec<InboundFileRef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,6 +41,15 @@ pub struct ChatUser {
     pub id: String,
     #[serde(default)]
     pub display_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InboundFileRef {
+    pub url: String,
+    pub filename: String,
+    pub mime_type: String,
+    #[serde(default)]
+    pub auth_header: Option<String>,
 }
 
 /// Response for chat inbound
@@ -112,6 +123,51 @@ pub async fn chat_inbound(
     let message_id = format!("generic_{}", uuid::Uuid::new_v4());
     let timestamp = chrono::Utc::now();
 
+    // Download and cache file attachments
+    let mut attachments = vec![];
+
+    // Warn once if files present but cache not configured
+    if state.file_cache.is_none() && !payload.files.is_empty() {
+        tracing::warn!("Files received but file cache not configured, skipping attachments");
+    }
+
+    for file_ref in &payload.files {
+        let Some(ref file_cache) = state.file_cache else {
+            continue;
+        };
+
+        match file_cache
+            .download_and_cache(
+                &file_ref.url,
+                file_ref.auth_header.as_deref(),
+                &file_ref.filename,
+                &file_ref.mime_type,
+            )
+            .await
+        {
+            Ok(cached) => {
+                attachments.push(crate::message::Attachment {
+                    filename: cached.filename.clone(),
+                    mime_type: cached.mime_type.clone(),
+                    size_bytes: cached.size_bytes,
+                    download_url: file_cache.get_download_url(&cached.file_id),
+                });
+                tracing::info!(
+                    file_id = %cached.file_id,
+                    filename = %cached.filename,
+                    "Generic inbound file cached"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    url = %file_ref.url,
+                    error = %e,
+                    "Failed to cache generic inbound file attachment"
+                );
+            }
+        }
+    }
+
     // Build normalized inbound message
     let inbound = InboundMessage {
         route,
@@ -128,7 +184,7 @@ pub async fn chat_inbound(
             },
         },
         text: payload.text,
-        attachments: vec![],
+        attachments,
         timestamp,
         extra_data: None,
     };
@@ -356,6 +412,7 @@ mod tests {
             text: text.to_string(),
             timestamp: chrono::Utc::now(),
             message_id: message_id.to_string(),
+            file_urls: vec![],
         }
     }
 
@@ -647,5 +704,29 @@ mod tests {
 
         assert_eq!(received1.text, "Broadcast message");
         assert_eq!(received2.text, "Broadcast message");
+    }
+
+    #[test]
+    fn test_chat_request_with_files() {
+        let json = r#"{
+            "chat_id": "123",
+            "text": "see attached",
+            "from": {"id": "u1"},
+            "files": [
+                {"url": "https://example.com/img.jpg", "filename": "img.jpg", "mime_type": "image/jpeg"}
+            ]
+        }"#;
+        let req: ChatRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.files.len(), 1);
+        assert_eq!(req.files[0].url, "https://example.com/img.jpg");
+        assert_eq!(req.files[0].filename, "img.jpg");
+        assert!(req.files[0].auth_header.is_none());
+    }
+
+    #[test]
+    fn test_chat_request_no_files() {
+        let json = r#"{"chat_id": "123", "text": "hello", "from": {"id": "u1"}}"#;
+        let req: ChatRequest = serde_json::from_str(json).unwrap();
+        assert!(req.files.is_empty());
     }
 }

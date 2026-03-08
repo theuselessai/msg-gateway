@@ -72,4 +72,6 @@ pub struct WsOutboundMessage {
     pub text: String,
     pub timestamp: chrono::DateTime<chrono::Utc>,
     pub message_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_urls: Vec<String>,
 }

@@ -899,3 +899,390 @@ async fn test_generic_chat_nonexistent_credential() {
 
     assert_eq!(resp.status(), 404);
 }
+
+// ============================================================================
+// Generic Adapter File Support Tests (PR #28)
+// ============================================================================
+
+/// Spawn a minimal HTTP file server that serves `content` at `path`
+async fn spawn_file_server(
+    path: &'static str,
+    content: &'static str,
+) -> (u16, tokio::task::JoinHandle<()>) {
+    use axum::routing::get;
+    let app = axum::Router::new().route(path, get(move || async move { content }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    (port, handle)
+}
+
+/// Spawn a mock backend that captures one inbound POST body and returns 200.
+/// Returns (port, receiver) — await the receiver to get the captured JSON body.
+async fn spawn_mock_backend() -> (u16, tokio::sync::oneshot::Receiver<serde_json::Value>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    tokio::spawn(async move {
+        if let Ok((mut stream, _)) = listener.accept().await {
+            // Read the full HTTP request
+            let mut buf = vec![0u8; 65536];
+            let mut total = 0;
+            loop {
+                match stream.read(&mut buf[total..]).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        total += n;
+                        // Check if we have the full HTTP request (headers + body)
+                        let so_far = &buf[..total];
+                        if let Some(header_end) = find_header_end(so_far) {
+                            // Parse Content-Length to know when body is complete
+                            let headers_str =
+                                std::str::from_utf8(&so_far[..header_end]).unwrap_or("");
+                            let content_length = parse_content_length(headers_str);
+                            let body_received = total - (header_end + 4);
+                            if body_received >= content_length {
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            // Extract JSON body (after \r\n\r\n)
+            let raw = &buf[..total];
+            let body_json = if let Some(header_end) = find_header_end(raw) {
+                let body_bytes = &raw[header_end + 4..];
+                serde_json::from_slice(body_bytes).unwrap_or(serde_json::Value::Null)
+            } else {
+                serde_json::Value::Null
+            };
+
+            // Send HTTP 200 response
+            let response =
+                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\n\r\nok";
+            let _ = stream.write_all(response).await;
+
+            let _ = tx.send(body_json);
+        }
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    (port, rx)
+}
+
+fn find_header_end(buf: &[u8]) -> Option<usize> {
+    buf.windows(4).position(|w| w == b"\r\n\r\n")
+}
+
+fn parse_content_length(headers: &str) -> usize {
+    for line in headers.lines() {
+        let lower = line.to_lowercase();
+        if lower.starts_with("content-length:")
+            && let Some(val) = lower.split(':').nth(1)
+        {
+            return val.trim().parse().unwrap_or(0);
+        }
+    }
+    0
+}
+
+/// Create test config with a custom backend inbound URL
+fn test_config_with_backend(gateway_port: u16, backend_port: u16) -> Config {
+    let mut config = test_config(gateway_port);
+    config.gateway.default_target.inbound_url =
+        Some(format!("http://127.0.0.1:{}/inbound", backend_port));
+    config
+}
+
+/// Create test config with file cache and a custom backend inbound URL
+fn test_config_with_file_cache_and_backend(
+    gateway_port: u16,
+    cache_dir: &str,
+    backend_port: u16,
+) -> Config {
+    let mut config = test_config_with_file_cache(gateway_port, cache_dir);
+    config.gateway.default_target.inbound_url =
+        Some(format!("http://127.0.0.1:{}/inbound", backend_port));
+    config
+}
+
+/// Test 1: Generic inbound with file — file is downloaded and cached successfully.
+/// The backend receives an InboundMessage with attachments[0].download_url starting with "http".
+#[tokio::test]
+async fn test_generic_inbound_with_file_success() {
+    // Spin up a file server serving a small text file
+    let (file_port, _file_server) = spawn_file_server("/file.txt", "hello").await;
+
+    // Spin up mock backend to capture the forwarded inbound message
+    let (backend_port, backend_rx) = spawn_mock_backend().await;
+
+    let gateway_port = find_available_port().await;
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let server = TestServer::new(test_config_with_file_cache_and_backend(
+        gateway_port,
+        &temp_dir.path().to_string_lossy(),
+        backend_port,
+    ))
+    .await;
+    let client = server.client();
+
+    // POST inbound message with a file reference
+    let resp = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "chat_id": "c1",
+            "text": "see file",
+            "from": {"id": "u1"},
+            "files": [{
+                "url": format!("http://127.0.0.1:{}/file.txt", file_port),
+                "filename": "file.txt",
+                "mime_type": "text/plain"
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 202);
+
+    // Wait for the backend to receive the forwarded message (with timeout)
+    let body = tokio::time::timeout(std::time::Duration::from_secs(5), backend_rx)
+        .await
+        .expect("Timed out waiting for backend")
+        .expect("Backend receiver dropped");
+
+    // Verify attachments were forwarded with a valid download URL
+    let attachments = body["attachments"].as_array().expect("attachments array");
+    assert_eq!(attachments.len(), 1, "Expected 1 attachment");
+    let download_url = attachments[0]["download_url"]
+        .as_str()
+        .expect("download_url string");
+    assert!(
+        download_url.starts_with("http"),
+        "Expected download_url to start with 'http', got: {}",
+        download_url
+    );
+}
+
+/// Test 2: Generic inbound with file — download fails (URL unreachable).
+/// Gateway still returns 202 (non-fatal), backend receives message with NO attachments (failed ones are skipped).
+#[tokio::test]
+async fn test_generic_inbound_with_file_download_failure() {
+    // Use a port with nothing listening to simulate a 404/connection refused
+    let dead_port = find_available_port().await;
+    // Don't bind it — just use the port number so connection is refused
+
+    let (backend_port, backend_rx) = spawn_mock_backend().await;
+
+    let gateway_port = find_available_port().await;
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let server = TestServer::new(test_config_with_file_cache_and_backend(
+        gateway_port,
+        &temp_dir.path().to_string_lossy(),
+        backend_port,
+    ))
+    .await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "chat_id": "c2",
+            "text": "bad file",
+            "from": {"id": "u2"},
+            "files": [{
+                "url": format!("http://127.0.0.1:{}/missing.txt", dead_port),
+                "filename": "missing.txt",
+                "mime_type": "text/plain"
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // Should still return 202 — file errors are non-fatal
+    assert_eq!(resp.status(), 202);
+
+    // Backend should still receive the message but with NO attachments (failed ones are skipped)
+    let body = tokio::time::timeout(std::time::Duration::from_secs(5), backend_rx)
+        .await
+        .expect("Timed out waiting for backend")
+        .expect("Backend receiver dropped");
+
+    let attachments = body
+        .get("attachments")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    assert_eq!(
+        attachments, 0,
+        "Expected 0 attachments (failed file was skipped)"
+    );
+}
+
+/// Test 3: Generic inbound with files but NO file cache configured.
+/// Files are silently ignored (warn logged), backend receives message with empty attachments.
+#[tokio::test]
+async fn test_generic_inbound_with_file_no_cache() {
+    let (backend_port, backend_rx) = spawn_mock_backend().await;
+
+    let gateway_port = find_available_port().await;
+    // Use config WITHOUT file cache
+    let server = TestServer::new(test_config_with_backend(gateway_port, backend_port)).await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "chat_id": "c3",
+            "text": "file ignored",
+            "from": {"id": "u3"},
+            "files": [{
+                "url": "http://127.0.0.1:1/ignored.txt",
+                "filename": "ignored.txt",
+                "mime_type": "text/plain"
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // Should return 202 — files are silently ignored when no cache
+    assert_eq!(resp.status(), 202);
+
+    // Backend receives message with no attachments (files were ignored)
+    let body = tokio::time::timeout(std::time::Duration::from_secs(5), backend_rx)
+        .await
+        .expect("Timed out waiting for backend")
+        .expect("Backend receiver dropped");
+
+    // attachments field is either absent or an empty array (skip_serializing_if = "Vec::is_empty")
+    let attachments = body.get("attachments");
+    let is_empty = attachments
+        .map(|a| a.as_array().map(|arr| arr.is_empty()).unwrap_or(true))
+        .unwrap_or(true);
+    assert!(
+        is_empty,
+        "Expected empty or absent attachments, got: {:?}",
+        attachments
+    );
+}
+
+/// Test 4: Send to generic adapter with file_ids — WebSocket client receives file_urls.
+#[tokio::test]
+async fn test_send_to_generic_with_file_ids_includes_file_urls() {
+    use futures_util::StreamExt;
+    use tokio_tungstenite::connect_async;
+
+    let gateway_port = find_available_port().await;
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let server = TestServer::new(test_config_with_file_cache(
+        gateway_port,
+        &temp_dir.path().to_string_lossy(),
+    ))
+    .await;
+    let client = server.client();
+
+    // Step 1: Upload a file to get a file_id and download_url
+    let file_content = b"test file for ws";
+    let file_part = reqwest::multipart::Part::bytes(file_content.to_vec())
+        .file_name("ws_test.txt")
+        .mime_str("text/plain")
+        .unwrap();
+    let form = reqwest::multipart::Form::new()
+        .part("file", file_part)
+        .text("filename", "ws_test.txt")
+        .text("mime_type", "text/plain");
+
+    let upload_resp = client
+        .post(server.url("/api/v1/files"))
+        .header("Authorization", format!("Bearer {}", server.send_token))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(upload_resp.status(), 200);
+    let upload_body: serde_json::Value = upload_resp.json().await.unwrap();
+    let file_id = upload_body["file_id"].as_str().unwrap().to_string();
+    let expected_download_url = upload_body["download_url"].as_str().unwrap().to_string();
+
+    // Step 2: Connect a WebSocket to the generic adapter chat
+    let ws_url = format!("ws://127.0.0.1:{}/ws/chat/test_generic/chat1", server.port);
+    let request = http::Request::builder()
+        .uri(&ws_url)
+        .header("Authorization", "Bearer generic_token")
+        .header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Host", format!("127.0.0.1:{}", server.port))
+        .body(())
+        .unwrap();
+
+    let (ws_stream, _) = connect_async(request)
+        .await
+        .expect("WebSocket connect failed");
+    let (_write, mut read) = ws_stream.split();
+
+    // Give the WS connection time to register in the registry
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Step 3: Send a message with file_ids via the send API
+    let send_resp = client
+        .post(server.url("/api/v1/send"))
+        .header("Authorization", format!("Bearer {}", server.send_token))
+        .json(&serde_json::json!({
+            "credential_id": "test_generic",
+            "chat_id": "chat1",
+            "text": "here",
+            "file_ids": [file_id]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert!(
+        send_resp.status().is_success(),
+        "Send failed: {:?}",
+        send_resp.status()
+    );
+
+    // Step 4: Assert WebSocket receives a message with file_urls containing the download URL
+    let ws_msg = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while let Some(msg) = read.next().await {
+            if let Ok(tokio_tungstenite::tungstenite::Message::Text(text)) = msg {
+                return text.to_string();
+            }
+        }
+        String::new()
+    })
+    .await
+    .expect("Timed out waiting for WebSocket message");
+
+    assert!(!ws_msg.is_empty(), "No WebSocket message received");
+
+    let ws_body: serde_json::Value =
+        serde_json::from_str(&ws_msg).expect("WS message is not valid JSON");
+
+    let file_urls = ws_body["file_urls"]
+        .as_array()
+        .expect("file_urls should be an array");
+    assert_eq!(file_urls.len(), 1, "Expected 1 file_url");
+    assert_eq!(
+        file_urls[0].as_str().unwrap(),
+        expected_download_url,
+        "file_url does not match expected download URL"
+    );
+}
