@@ -11,26 +11,38 @@ use tokio::sync::mpsc;
 
 use crate::adapter::AdapterInstanceManager;
 use crate::config::{self, CredentialConfig};
+use crate::guardrail::{GuardrailEngine, load_rules_from_dir};
 use crate::manager::CredentialManager;
 use crate::server::AppState;
 
-/// Start watching the config file for changes
+#[derive(Debug)]
+enum WatchEvent {
+    Config,
+    Guardrails,
+}
+
 pub async fn watch_config(
     config_path: String,
     state: Arc<AppState>,
     manager: Arc<CredentialManager>,
     adapter_manager: Arc<AdapterInstanceManager>,
+    guardrails_dir: Option<String>,
 ) -> anyhow::Result<()> {
     let (tx, mut rx) = mpsc::channel(10);
 
-    // Create watcher
+    let tx_config = tx.clone();
+    let tx_guardrails = tx.clone();
     let mut watcher = RecommendedWatcher::new(
         move |res: Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
-                // Only care about modify/create events
                 match event.kind {
                     EventKind::Modify(_) | EventKind::Create(_) => {
-                        let _ = tx.blocking_send(());
+                        // notify does not distinguish which registered path triggered
+                        // the event, so broadcast both variants; the receiver uses
+                        // separate debounce timers and the `watching_guardrails` flag
+                        // to ignore irrelevant events.
+                        let _ = tx_config.blocking_send(WatchEvent::Config);
+                        let _ = tx_guardrails.blocking_send(WatchEvent::Guardrails);
                     }
                     _ => {}
                 }
@@ -39,10 +51,8 @@ pub async fn watch_config(
         Config::default(),
     )?;
 
-    // Watch the config file's parent directory
     let path = Path::new(&config_path);
     let watch_path = path.parent().unwrap_or(Path::new("."));
-
     watcher.watch(watch_path, RecursiveMode::NonRecursive)?;
 
     tracing::info!(
@@ -50,68 +60,152 @@ pub async fn watch_config(
         "Config watcher started"
     );
 
-    // Debounce timer - long enough to avoid race with Admin API
+    let watching_guardrails = if let Some(ref dir) = guardrails_dir {
+        let guardrails_path = Path::new(dir);
+        if guardrails_path.exists() {
+            watcher.watch(guardrails_path, RecursiveMode::NonRecursive)?;
+            tracing::info!(
+                path = %dir,
+                "Guardrails watcher started"
+            );
+            true
+        } else {
+            tracing::warn!(
+                path = %dir,
+                "Guardrails directory does not exist, skipping watch"
+            );
+            false
+        }
+    } else {
+        false
+    };
+
     let debounce_duration = Duration::from_millis(1000);
-    let mut last_reload = std::time::Instant::now();
+    let mut last_config_reload = std::time::Instant::now();
+    let mut last_guardrail_reload = std::time::Instant::now();
 
     loop {
-        // Wait for file change event
-        if rx.recv().await.is_none() {
-            break;
-        }
+        let event = match rx.recv().await {
+            Some(e) => e,
+            None => break,
+        };
 
-        // Debounce: skip if we just reloaded
-        let now = std::time::Instant::now();
-        if now.duration_since(last_reload) < debounce_duration {
-            continue;
-        }
-
-        // Additional delay to let Admin API operations complete
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // Drain any pending events (more debouncing)
-        while rx.try_recv().is_ok() {}
-
-        // Check if this change was triggered by Admin API
-        {
-            let skip_until = state.skip_reload_until.read().await;
-            if let Some(until) = *skip_until
-                && std::time::Instant::now() < until
-            {
-                tracing::debug!("Skipping reload (triggered by Admin API)");
-                continue;
-            }
-        }
-
-        tracing::info!("Config file changed, reloading...");
-
-        // Load new config
-        match config::load_config(&config_path) {
-            Ok(new_config) => {
-                let old_config = state.config.read().await.clone();
-
-                // Update config in state
-                {
-                    let mut config = state.config.write().await;
-                    *config = new_config.clone();
+        match event {
+            WatchEvent::Config => {
+                let now = std::time::Instant::now();
+                if now.duration_since(last_config_reload) < debounce_duration {
+                    continue;
                 }
 
-                // Sync adapter instances with new config
-                sync_adapters(&old_config, &new_config, &manager, &adapter_manager).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let mut also_reload_guardrails = false;
+                while let Ok(drained) = rx.try_recv() {
+                    if matches!(drained, WatchEvent::Guardrails) {
+                        also_reload_guardrails = true;
+                    }
+                }
 
-                // Sync backend instances with new config
-                sync_backends(&old_config, &new_config, &state).await;
+                let should_skip_reload = {
+                    let skip_until = state.skip_reload_until.read().await;
+                    matches!(*skip_until, Some(until) if std::time::Instant::now() < until)
+                };
+                if should_skip_reload {
+                    tracing::debug!("Skipping reload (triggered by Admin API)");
+                    continue;
+                }
 
-                tracing::info!("Config reloaded successfully");
-                last_reload = std::time::Instant::now();
+                tracing::info!("Config file changed, reloading...");
+                perform_config_reload(&config_path, &state, &manager, &adapter_manager).await;
+                last_config_reload = std::time::Instant::now();
+
+                if also_reload_guardrails
+                    && watching_guardrails
+                    && let Some(ref dir) = guardrails_dir
+                {
+                    tracing::info!(path = %dir, "Guardrails directory changed (detected during config drain), reloading rules...");
+                    perform_guardrail_reload(dir, &state).await;
+                    last_guardrail_reload = std::time::Instant::now();
+                }
             }
-            Err(e) => {
-                tracing::error!(error = %e, "Failed to reload config, keeping old config");
+            WatchEvent::Guardrails => {
+                if !watching_guardrails {
+                    continue;
+                }
+
+                let now = std::time::Instant::now();
+                if now.duration_since(last_guardrail_reload) < debounce_duration {
+                    continue;
+                }
+
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let mut also_reload_config = false;
+                while let Ok(drained) = rx.try_recv() {
+                    if matches!(drained, WatchEvent::Config) {
+                        also_reload_config = true;
+                    }
+                }
+
+                let dir = guardrails_dir
+                    .as_deref()
+                    .expect("guardrails_dir is Some when watching_guardrails is true");
+                tracing::info!(path = %dir, "Guardrails directory changed, reloading rules...");
+                perform_guardrail_reload(dir, &state).await;
+                last_guardrail_reload = std::time::Instant::now();
+
+                if also_reload_config {
+                    let should_skip = {
+                        let skip_until = state.skip_reload_until.read().await;
+                        matches!(*skip_until, Some(until) if std::time::Instant::now() < until)
+                    };
+                    if should_skip {
+                        tracing::debug!("Skipping config reload (triggered by Admin API)");
+                    } else {
+                        tracing::info!(
+                            "Config file changed (detected during guardrails drain), reloading..."
+                        );
+                        perform_config_reload(&config_path, &state, &manager, &adapter_manager)
+                            .await;
+                        last_config_reload = std::time::Instant::now();
+                    }
+                }
             }
         }
     }
 
     Ok(())
+}
+
+async fn perform_config_reload(
+    config_path: &str,
+    state: &Arc<AppState>,
+    manager: &Arc<CredentialManager>,
+    adapter_manager: &Arc<AdapterInstanceManager>,
+) {
+    match config::load_config(config_path) {
+        Ok(new_config) => {
+            let old_config = state.config.read().await.clone();
+            {
+                let mut config = state.config.write().await;
+                *config = new_config.clone();
+            }
+            sync_adapters(&old_config, &new_config, manager, adapter_manager).await;
+            sync_backends(&old_config, &new_config, state).await;
+            tracing::info!("Config reloaded successfully");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to reload config, keeping old config");
+        }
+    }
+}
+
+async fn perform_guardrail_reload(dir: &str, state: &Arc<AppState>) {
+    let rules = load_rules_from_dir(Path::new(dir));
+    let new_engine = GuardrailEngine::from_rules(rules);
+    {
+        let mut engine = state.guardrail_engine.write().await;
+        *engine = new_engine;
+    }
+    tracing::info!(path = %dir, "Guardrail rules reloaded successfully");
 }
 
 /// Sync adapter instances with config changes
@@ -344,6 +438,7 @@ mod tests {
                 backends_dir: "./backends".to_string(),
                 backend_port_range: (9200, 9300),
                 file_cache: None,
+                guardrails_dir: None,
             },
             auth: AuthConfig {
                 send_token: "test-send-token".to_string(),
@@ -600,5 +695,44 @@ mod tests {
 
         // Should still have the same instance
         assert!(is_registered(&manager, "cred1").await);
+    }
+
+    #[test]
+    fn test_guardrail_reload_valid_rules_replaces_engine() {
+        use crate::guardrail::{GuardrailEngine, load_rules_from_dir};
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let rule_json = r#"{"name":"block_all","expression":"true","enabled":true}"#;
+        fs::write(dir.path().join("01_rule.json"), rule_json).unwrap();
+
+        let rules = load_rules_from_dir(dir.path());
+        assert_eq!(rules.len(), 1);
+
+        let engine = GuardrailEngine::from_rules(rules);
+        assert!(!engine.is_empty());
+    }
+
+    #[test]
+    fn test_guardrail_reload_malformed_json_keeps_valid_rules() {
+        use crate::guardrail::{GuardrailEngine, load_rules_from_dir};
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let valid_rule = r#"{"name":"allow_rule","expression":"false","enabled":true}"#;
+        fs::write(dir.path().join("01_valid.json"), valid_rule).unwrap();
+        fs::write(dir.path().join("02_bad.json"), "not valid json {{{").unwrap();
+
+        let rules = load_rules_from_dir(dir.path());
+        assert_eq!(
+            rules.len(),
+            1,
+            "malformed file should be skipped, valid rule kept"
+        );
+
+        let engine = GuardrailEngine::from_rules(rules);
+        assert!(!engine.is_empty());
     }
 }

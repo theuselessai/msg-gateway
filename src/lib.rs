@@ -9,6 +9,7 @@ pub mod config;
 pub mod error;
 pub mod files;
 pub mod generic;
+pub mod guardrail;
 pub mod health;
 pub mod manager;
 pub mod message;

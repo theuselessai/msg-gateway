@@ -14,6 +14,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 
 use crate::error::AppError;
+use crate::guardrail::GuardrailVerdict;
 use crate::message::{InboundMessage, MessageSource, UserInfo, WsOutboundMessage};
 use crate::server::AppState;
 
@@ -201,6 +202,17 @@ pub async fn chat_inbound(
         timestamp,
         extra_data: None,
     };
+
+    let verdict = {
+        let engine = state.guardrail_engine.read().await;
+        engine.evaluate_inbound(&inbound)
+    };
+    match verdict {
+        GuardrailVerdict::Block { reject_message, .. } => {
+            return Err(AppError::Forbidden(reject_message));
+        }
+        GuardrailVerdict::Allow => {}
+    }
 
     // Check if target server is down - buffer message instead of forwarding
     let health_state = state.health_monitor.get_state().await;

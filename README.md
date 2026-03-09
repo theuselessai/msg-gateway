@@ -104,6 +104,86 @@ wscat -c ws://localhost:8080/ws/chat/my_generic/session1 \
   -H "Authorization: Bearer $TOKEN"
 ```
 
+## Guardrails
+
+Guardrails let you filter inbound messages using [CEL (Common Expression Language)](https://cel.dev) expressions. Each rule is a JSON file in `guardrails_dir`. Rules are evaluated in lexicographic filename order, so zero-padded prefixes (`01-`, `02-`, ...) give you predictable ordering.
+
+### Rule format
+
+Each file contains a single JSON object:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | required | Human-readable rule name |
+| `type` | `"cel"` | `"cel"` | Rule type (only CEL supported) |
+| `expression` | string | required | CEL expression that must evaluate to `bool` |
+| `action` | `"block"` or `"log"` | `"block"` | What to do when the expression is true |
+| `direction` | `"inbound"`, `"outbound"`, or `"both"` | `"inbound"` | Which messages to apply the rule to |
+| `on_error` | `"allow"` or `"block"` | `"allow"` | Behavior when CEL evaluation fails |
+| `reject_message` | string | none | Body returned in the HTTP 403 response when blocked |
+| `enabled` | bool | `true` | Set to `false` to disable without deleting the file |
+
+### CEL expression examples
+
+The `message` variable is available in every expression:
+
+```
+# Block messages containing sensitive keywords (Rust regex syntax)
+message.text.matches("(?i)(password|secret|api_key)")
+
+# Block messages over 10000 characters
+size(message.text) > 10000
+
+# Log messages that include file attachments (never blocks)
+size(message.attachments) > 0
+
+# Block messages from a specific source protocol
+message.source.protocol == "telegram"
+```
+
+### Example rule files
+
+```json
+{
+  "name": "block-sensitive-keywords",
+  "expression": "message.text.matches(\"(?i)(password|secret|api_key)\")",
+  "action": "block",
+  "reject_message": "Message contains sensitive keywords and cannot be forwarded."
+}
+```
+
+```json
+{
+  "name": "audit-attachments",
+  "expression": "size(message.attachments) > 0",
+  "action": "log"
+}
+```
+
+### Limitations
+
+- **`matches()` uses Rust regex syntax**, not RE2 or the Google CEL spec. Lookaheads and backreferences are not supported. Case-insensitive matching uses the `(?i)` flag.
+- **`has()` is not available.** `Option<T>` fields serialize as `null` when `None`, so CEL sees them as `null` rather than absent. However, fields with `skip_serializing_if` (like `attachments` when empty) are omitted from the CEL context entirely. Use `on_error: "allow"` (the default) so rules referencing omitted fields fail open instead of blocking.
+- Outbound guardrails are not evaluated in v1. Only `"direction": "inbound"` rules take effect.
+
+### Hot reload
+
+Guardrail rules reload automatically when rule files in `guardrails_dir` change. No restart needed.
+
+### Configuration
+
+Point `guardrails_dir` at a directory of rule files:
+
+```json
+{
+  "gateway": {
+    "guardrails_dir": "./guardrails"
+  }
+}
+```
+
+If `guardrails_dir` is omitted and a `guardrails/` directory exists next to `config.json`, it's picked up automatically.
+
 ## API Endpoints
 
 | Endpoint | Description |

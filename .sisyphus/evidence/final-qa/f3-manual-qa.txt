@@ -1,0 +1,40 @@
+F3: Manual QA Evidence
+======================
+Date: 2026-03-09
+Branch: feat/cel-guardrails
+Working dir: /home/aka/programs/msg-gateway-cel-guardrails
+
+Build [PASS]
+  cargo build completed in 28.14s (dev profile)
+  Output: Finished `dev` profile [unoptimized + debuginfo] target(s) in 28.14s
+
+Scenarios:
+  1. Health check — [PASS]: {"status":"ok"} HTTP 200
+  2. Blocked message → 403 — [PASS]: HTTP 403, body: {"error":"Message blocked: contains sensitive keyword"}
+  3. Clean message → 202 — [PASS]: HTTP 202, body: {"message_id":"generic_a023d8cd-ee08-4fda-aabf-7fe74029adf8","timestamp":"2026-03-09T14:06:14.165882474Z"}
+  4. Invalid CEL fail-open → 202 — [PASS]: HTTP 202, body: {"message_id":"generic_d401046d-b3dc-4cef-b9a3-dd0899cf974e","timestamp":"2026-03-09T14:06:24.237042428Z"}
+  5. Disabled rule ignored → 202 — [PASS]: HTTP 202, body: {"message_id":"generic_72884b87-86bf-43db-96be-9a4ec80581c1","timestamp":"2026-03-09T14:06:32.242577Z"}
+
+Scenarios [5/5 pass]
+Edge Cases [3 tested: hot-reload, fail-open, disabled rule]
+
+VERDICT: APPROVE
+Reason: All 5 scenarios passed. Guardrail system correctly:
+  - Blocks messages matching CEL expression (password regex) with HTTP 403 and custom reject_message
+  - Passes clean messages through (HTTP 202, fire-and-forget to backend)
+  - Handles invalid CEL expressions gracefully (compile-time skip, fail-open, HTTP 202)
+  - Ignores disabled rules (enabled: false skipped at load time, HTTP 202)
+  - Hot-reloads guardrail rules when files change (watcher logs confirm reload events)
+
+Gateway Log Evidence (key entries):
+  [INFO] Guardrails watcher started path=/tmp/guardrail-qa-test/guardrails
+  [INFO] Guardrail rules reloaded successfully (multiple times on file changes)
+  [ERROR] Failed to compile guardrail CEL expression, skipping rule name=invalid-rule
+          expression="this is not valid CEL !!!" error=Error parsing Unrecognized token `is`
+  [DEBUG] Skipping disabled guardrail rule name=disabled-block-all
+  HTTP 403 for password-containing message (14ms latency)
+  HTTP 202 for clean messages (6-7ms latency)
+
+Note: Backend connection errors (localhost:19999/inbound) are expected — no real backend in test.
+      The gateway correctly returns 202 (fire-and-forget) before attempting backend delivery.
+      The API requires `from: {id: "..."}` field in the ChatRequest payload (not documented in task).
