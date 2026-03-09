@@ -98,7 +98,12 @@ pub async fn watch_config(
                 }
 
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                while rx.try_recv().is_ok() {}
+                let mut also_reload_guardrails = false;
+                while let Ok(drained) = rx.try_recv() {
+                    if matches!(drained, WatchEvent::Guardrails) {
+                        also_reload_guardrails = true;
+                    }
+                }
 
                 {
                     let skip_until = state.skip_reload_until.read().await;
@@ -133,6 +138,19 @@ pub async fn watch_config(
                         tracing::error!(error = %e, "Failed to reload config, keeping old config");
                     }
                 }
+
+                if also_reload_guardrails
+                    && watching_guardrails
+                    && let Some(ref dir) = guardrails_dir
+                {
+                    tracing::info!(path = %dir, "Guardrails directory changed (detected during config drain), reloading rules...");
+                    let rules = load_rules_from_dir(Path::new(dir));
+                    let new_engine = GuardrailEngine::from_rules(rules);
+                    let mut engine = state.guardrail_engine.write().await;
+                    *engine = new_engine;
+                    tracing::info!(path = %dir, "Guardrail rules reloaded successfully");
+                    last_guardrail_reload = std::time::Instant::now();
+                }
             }
             WatchEvent::Guardrails => {
                 if !watching_guardrails {
@@ -145,7 +163,12 @@ pub async fn watch_config(
                 }
 
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                while rx.try_recv().is_ok() {}
+                let mut also_reload_config = false;
+                while let Ok(drained) = rx.try_recv() {
+                    if matches!(drained, WatchEvent::Config) {
+                        also_reload_config = true;
+                    }
+                }
 
                 let dir = guardrails_dir
                     .as_deref()
@@ -162,6 +185,39 @@ pub async fn watch_config(
 
                 tracing::info!(path = %dir, "Guardrail rules reloaded successfully");
                 last_guardrail_reload = std::time::Instant::now();
+
+                if also_reload_config {
+                    let skip_until = state.skip_reload_until.read().await;
+                    let should_skip = skip_until
+                        .map(|until| std::time::Instant::now() < until)
+                        .unwrap_or(false);
+                    drop(skip_until);
+
+                    if should_skip {
+                        tracing::debug!("Skipping config reload (triggered by Admin API)");
+                    } else {
+                        tracing::info!(
+                            "Config file changed (detected during guardrails drain), reloading..."
+                        );
+                        match config::load_config(&config_path) {
+                            Ok(new_config) => {
+                                let old_config = state.config.read().await.clone();
+                                {
+                                    let mut config = state.config.write().await;
+                                    *config = new_config.clone();
+                                }
+                                sync_adapters(&old_config, &new_config, &manager, &adapter_manager)
+                                    .await;
+                                sync_backends(&old_config, &new_config, &state).await;
+                                tracing::info!("Config reloaded successfully");
+                                last_config_reload = std::time::Instant::now();
+                            }
+                            Err(e) => {
+                                tracing::error!(error = %e, "Failed to reload config, keeping old config");
+                            }
+                        }
+                    }
+                }
             }
         }
     }
