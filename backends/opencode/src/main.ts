@@ -223,7 +223,8 @@ function startEventStream(): ReturnType<typeof createEventSource> {
         const globalEvent = JSON.parse(data) as { payload: { type: string; properties: Record<string, unknown> } };
         handleEvent(globalEvent.payload);
       } catch (err) {
-        log(`SSE parse error: ${err}`);
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`SSE parse error: ${msg}`);
       }
     },
     onDisconnect: () => {
@@ -351,7 +352,8 @@ async function shutdown(signal: string, eventSource: ReturnType<typeof createEve
   try {
     await app.close();
   } catch (err) {
-    log(`Error during shutdown: ${err}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Error during shutdown: ${msg}`);
   }
   log("Backend adapter stopped");
   process.exit(0);
@@ -392,6 +394,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  log(`Fatal error: ${err}`);
+  const msg = err instanceof Error ? err.message : String(err);
+  log(`Fatal error: ${msg}`);
   process.exit(1);
 });

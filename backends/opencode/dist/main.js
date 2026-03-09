@@ -170,7 +170,8 @@ function startEventStream() {
                 handleEvent(globalEvent.payload);
             }
             catch (err) {
-                log(`SSE parse error: ${err}`);
+                const msg = err instanceof Error ? err.message : String(err);
+                log(`SSE parse error: ${msg}`);
             }
         },
         onDisconnect: () => {
@@ -278,7 +279,8 @@ async function shutdown(signal, eventSource) {
         await app.close();
     }
     catch (err) {
-        log(`Error during shutdown: ${err}`);
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`Error during shutdown: ${msg}`);
     }
     log("Backend adapter stopped");
     process.exit(0);
@@ -313,6 +315,7 @@ async function main() {
     log(`HTTP server listening on port ${BACKEND_PORT}`);
 }
 main().catch((err) => {
-    log(`Fatal error: ${err}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Fatal error: ${msg}`);
     process.exit(1);
 });
