@@ -540,8 +540,12 @@ async fn adapter_inbound(
         gateway_url: format!("http://{}", config.gateway.listen),
         send_token: config.auth.send_token.clone(),
     };
-    let backend_adapter = crate::backend::create_adapter(backend_cfg, Some(&gateway_ctx), None)
-        .map_err(|e| AppError::Internal(format!("Failed to create backend adapter: {}", e)))?;
+    let backend_adapter = crate::backend::create_adapter(
+        backend_cfg,
+        Some(&gateway_ctx),
+        backend_cfg.config.as_ref(),
+    )
+    .map_err(|e| AppError::Internal(format!("Failed to create backend adapter: {}", e)))?;
     drop(config);
 
     // Build normalized inbound message

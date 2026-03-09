@@ -3,9 +3,10 @@
 //! These tests spawn a real gateway server and mock backend to test the full flow.
 
 use msg_gateway::adapter::AdapterInstanceManager;
+use msg_gateway::backend::ExternalBackendManager;
 use msg_gateway::config::{
-    AuthConfig, BackendProtocol, Config, CredentialConfig, FileCacheConfig, GatewayConfig,
-    TargetConfig,
+    AuthConfig, BackendConfig, BackendProtocol, Config, CredentialConfig, FileCacheConfig,
+    GatewayConfig,
 };
 use msg_gateway::manager::CredentialManager;
 use serial_test::serial;
@@ -15,19 +16,26 @@ use std::time::Duration;
 
 /// Create a minimal test config
 fn test_config(port: u16) -> Config {
+    let mut backends = HashMap::new();
+    backends.insert(
+        "default".to_string(),
+        BackendConfig {
+            protocol: BackendProtocol::Pipelit,
+            inbound_url: Some("http://127.0.0.1:18000/inbound".to_string()),
+            base_url: None,
+            token: "test_backend_token".to_string(),
+            poll_interval_ms: None,
+            adapter_dir: None,
+            port: None,
+            active: true,
+            config: None,
+        },
+    );
     Config {
         gateway: GatewayConfig {
             listen: format!("127.0.0.1:{}", port),
             admin_token: "test_admin_token".to_string(),
-            default_target: TargetConfig {
-                protocol: BackendProtocol::Pipelit,
-                inbound_url: Some("http://127.0.0.1:18000/inbound".to_string()),
-                base_url: None,
-                token: "test_backend_token".to_string(),
-                poll_interval_ms: None,
-                adapter_dir: None,
-                port: None,
-            },
+            default_backend: Some("default".to_string()),
             adapters_dir: "./adapters".to_string(),
             adapter_port_range: (19000, 19100),
             backends_dir: "./backends".to_string(),
@@ -38,6 +46,7 @@ fn test_config(port: u16) -> Config {
             send_token: "test_send_token".to_string(),
         },
         health_checks: HashMap::new(),
+        backends,
         credentials: {
             let mut creds = HashMap::new();
             creds.insert(
@@ -49,7 +58,7 @@ fn test_config(port: u16) -> Config {
                     emergency: false,
                     route: serde_json::json!({"channel": "test"}),
                     config: None,
-                    target: None,
+                    backend: None,
                 },
             );
             creds
@@ -114,8 +123,14 @@ impl TestServer {
             .unwrap(),
         );
 
+        let backend_manager = Arc::new(ExternalBackendManager::new(
+            config.gateway.backends_dir.clone(),
+            config.gateway.backend_port_range,
+            &config.gateway.listen,
+        ));
+
         let (state, server_future) =
-            msg_gateway::server::create_server(config, manager, adapter_manager)
+            msg_gateway::server::create_server(config, manager, adapter_manager, backend_manager)
                 .await
                 .unwrap();
 
@@ -1001,8 +1016,9 @@ fn parse_content_length(headers: &str) -> usize {
 /// Create test config with a custom backend inbound URL
 fn test_config_with_backend(gateway_port: u16, backend_port: u16) -> Config {
     let mut config = test_config(gateway_port);
-    config.gateway.default_target.inbound_url =
-        Some(format!("http://127.0.0.1:{}/inbound", backend_port));
+    if let Some(b) = config.backends.get_mut("default") {
+        b.inbound_url = Some(format!("http://127.0.0.1:{}/inbound", backend_port));
+    }
     config
 }
 
@@ -1013,8 +1029,9 @@ fn test_config_with_file_cache_and_backend(
     backend_port: u16,
 ) -> Config {
     let mut config = test_config_with_file_cache(gateway_port, cache_dir);
-    config.gateway.default_target.inbound_url =
-        Some(format!("http://127.0.0.1:{}/inbound", backend_port));
+    if let Some(b) = config.backends.get_mut("default") {
+        b.inbound_url = Some(format!("http://127.0.0.1:{}/inbound", backend_port));
+    }
     config
 }
 
@@ -1393,19 +1410,31 @@ async fn spawn_mock_opencode(
 
 /// Create test config with an OpenCode backend credential ("test_opencode")
 fn test_config_with_opencode_backend(gateway_port: u16, opencode_port: u16) -> Config {
+    let mut backends = HashMap::new();
+    backends.insert(
+        "opencode_test".to_string(),
+        BackendConfig {
+            protocol: BackendProtocol::Opencode,
+            inbound_url: None,
+            base_url: Some(format!("http://127.0.0.1:{}", opencode_port)),
+            token: "testuser:testpass".to_string(),
+            poll_interval_ms: None,
+            adapter_dir: None,
+            port: None,
+            active: true,
+            config: Some(serde_json::json!({
+                "model": {
+                    "providerID": "test",
+                    "modelID": "test-model"
+                }
+            })),
+        },
+    );
     Config {
         gateway: GatewayConfig {
             listen: format!("127.0.0.1:{}", gateway_port),
             admin_token: "test_admin_token".to_string(),
-            default_target: TargetConfig {
-                protocol: BackendProtocol::Pipelit,
-                inbound_url: Some("http://127.0.0.1:18000/inbound".to_string()),
-                base_url: None,
-                token: "test_backend_token".to_string(),
-                poll_interval_ms: None,
-                adapter_dir: None,
-                port: None,
-            },
+            default_backend: None,
             adapters_dir: "./adapters".to_string(),
             adapter_port_range: (19000, 19100),
             backends_dir: "./backends".to_string(),
@@ -1416,6 +1445,7 @@ fn test_config_with_opencode_backend(gateway_port: u16, opencode_port: u16) -> C
             send_token: "test_send_token".to_string(),
         },
         health_checks: HashMap::new(),
+        backends,
         credentials: {
             let mut creds = HashMap::new();
             creds.insert(
@@ -1426,21 +1456,8 @@ fn test_config_with_opencode_backend(gateway_port: u16, opencode_port: u16) -> C
                     active: true,
                     emergency: false,
                     route: serde_json::json!({"channel": "test_opencode"}),
-                    config: Some(serde_json::json!({
-                        "model": {
-                            "providerID": "test",
-                            "modelID": "test-model"
-                        }
-                    })),
-                    target: Some(TargetConfig {
-                        protocol: BackendProtocol::Opencode,
-                        inbound_url: None,
-                        base_url: Some(format!("http://127.0.0.1:{}", opencode_port)),
-                        token: "testuser:testpass".to_string(),
-                        poll_interval_ms: None,
-                        adapter_dir: None,
-                        port: None,
-                    }),
+                    config: None,
+                    backend: Some("opencode_test".to_string()),
                 },
             );
             creds
@@ -1594,21 +1611,8 @@ async fn test_opencode_backend_session_isolation() {
             active: true,
             emergency: false,
             route: serde_json::json!({"channel": "test_opencode_beta"}),
-            config: Some(serde_json::json!({
-                "model": {
-                    "providerID": "test",
-                    "modelID": "test-model"
-                }
-            })),
-            target: Some(TargetConfig {
-                protocol: BackendProtocol::Opencode,
-                inbound_url: None,
-                base_url: Some(format!("http://127.0.0.1:{}", oc_port)),
-                token: "testuser:testpass".to_string(),
-                poll_interval_ms: None,
-                adapter_dir: None,
-                port: None,
-            }),
+            config: None,
+            backend: Some("opencode_test".to_string()),
         },
     );
 

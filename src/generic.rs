@@ -117,7 +117,11 @@ pub async fn chat_inbound(
         gateway_url: format!("http://{}", config.gateway.listen),
         send_token: config.auth.send_token.clone(),
     };
-    let adapter = match crate::backend::create_adapter(backend_cfg, Some(&gateway_ctx), None) {
+    let adapter = match crate::backend::create_adapter(
+        backend_cfg,
+        Some(&gateway_ctx),
+        backend_cfg.config.as_ref(),
+    ) {
         Ok(a) => a,
         Err(e) => {
             return Err(AppError::Internal(format!(
