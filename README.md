@@ -135,7 +135,7 @@ message.text.matches("(?i)(password|secret|api_key)")
 size(message.text) > 10000
 
 # Log messages that include file attachments (never blocks)
-size(message.files) > 0
+size(message.attachments) > 0
 
 # Block messages from a specific source protocol
 message.source.protocol == "telegram"
@@ -155,7 +155,7 @@ message.source.protocol == "telegram"
 ```json
 {
   "name": "audit-attachments",
-  "expression": "size(message.files) > 0",
+  "expression": "size(message.attachments) > 0",
   "action": "log"
 }
 ```
@@ -163,7 +163,7 @@ message.source.protocol == "telegram"
 ### Limitations
 
 - **`matches()` uses Rust regex syntax**, not RE2 or the Google CEL spec. Lookaheads and backreferences are not supported. Case-insensitive matching uses the `(?i)` flag.
-- **`has()` is not available.** Optional fields are pre-converted to `null` by the gateway when present, but fields with `skip_serializing_if` (like empty `attachments`) may be absent from the CEL context entirely. Use `on_error: "allow"` (the default) to handle evaluation errors from missing fields gracefully.
+- **`has()` is not available.** `Option<T>` fields serialize as `null` when `None`, so CEL sees them as `null` rather than absent. However, fields with `skip_serializing_if` (like `attachments` when empty) are omitted from the CEL context entirely. Use `on_error: "allow"` (the default) so rules referencing omitted fields fail open instead of blocking.
 - Outbound guardrails are not evaluated in v1. Only `"direction": "inbound"` rules take effect.
 
 ### Hot reload

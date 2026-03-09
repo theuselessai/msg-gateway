@@ -203,8 +203,11 @@ pub async fn chat_inbound(
         extra_data: None,
     };
 
-    let engine = state.guardrail_engine.read().await;
-    match engine.evaluate_inbound(&inbound) {
+    let verdict = {
+        let engine = state.guardrail_engine.read().await;
+        engine.evaluate_inbound(&inbound)
+    };
+    match verdict {
         GuardrailVerdict::Block { reject_message, .. } => {
             return Err(AppError::Forbidden(reject_message));
         }

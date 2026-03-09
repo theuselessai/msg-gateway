@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
     let config = config::load_config(
         config_path
             .to_str()
-            .expect("Config path contains invalid UTF-8"),
+            .ok_or_else(|| anyhow::anyhow!("Config path contains invalid UTF-8"))?,
     )?;
     tracing::info!(listen = %config.gateway.listen, "Configuration loaded");
 
@@ -200,7 +200,10 @@ async fn main() -> anyhow::Result<()> {
     let watcher_state = state.clone();
     let watcher_manager = manager.clone();
     let watcher_adapter_manager = adapter_manager.clone();
-    let watcher_path = config_path.to_string_lossy().into_owned();
+    let watcher_path = config_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Config path contains invalid UTF-8"))?
+        .to_string();
     let watcher_guardrails_dir = config.gateway.guardrails_dir.clone();
     tokio::spawn(async move {
         if let Err(e) = watcher::watch_config(

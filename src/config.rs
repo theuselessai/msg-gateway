@@ -1129,9 +1129,12 @@ mod tests {
 
     #[test]
     fn test_guardrails_dir_serde_absent() {
-        let json = r#"{"name":"test","expression":"true"}"#;
-        let rule: GuardrailRule = serde_json::from_str(json).unwrap();
-        assert!(rule.enabled);
+        let json = r#"{
+            "listen": "127.0.0.1:8080",
+            "admin_token": "tok"
+        }"#;
+        let gw: GatewayConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(gw.guardrails_dir, None);
     }
 
     #[test]

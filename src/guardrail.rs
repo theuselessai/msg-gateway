@@ -144,8 +144,13 @@ impl GuardrailEngine {
     }
 
     pub fn evaluate_inbound(&self, message: &InboundMessage) -> GuardrailVerdict {
-        let json_val =
-            serde_json::to_value(message).expect("InboundMessage serialization is infallible");
+        let json_val = match serde_json::to_value(message) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to serialize InboundMessage for guardrail evaluation");
+                return GuardrailVerdict::Allow;
+            }
+        };
         let cel_val = json_to_cel_value(json_val);
 
         let mut ctx = Context::default();
