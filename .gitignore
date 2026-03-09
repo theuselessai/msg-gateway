@@ -8,3 +8,5 @@ e2e/reports/
 e2e/dist/
 adapters/telegram/node_modules/
 adapters/telegram/dist/
+backends/opencode/node_modules/
+backends/opencode/dist/

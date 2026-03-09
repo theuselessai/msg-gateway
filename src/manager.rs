@@ -312,9 +312,13 @@ mod tests {
                     base_url: None,
                     token: "test-backend-token".to_string(),
                     poll_interval_ms: None,
+                    adapter_dir: None,
+                    port: None,
                 },
                 adapters_dir: "./adapters".to_string(),
                 adapter_port_range: (9000, 9100),
+                backends_dir: "./backends".to_string(),
+                backend_port_range: (9200, 9300),
                 file_cache: None,
             },
             auth: AuthConfig {

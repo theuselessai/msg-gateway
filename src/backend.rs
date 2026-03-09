@@ -311,6 +311,193 @@ impl BackendAdapter for OpencodeAdapter {
     }
 }
 
+pub struct ExternalBackendAdapter {
+    port: u16,
+    token: String,
+    client: reqwest::Client,
+}
+
+impl ExternalBackendAdapter {
+    pub fn new(port: u16, token: String) -> Result<Self, BackendError> {
+        Ok(Self {
+            port,
+            token,
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()?,
+        })
+    }
+}
+
+#[async_trait]
+impl BackendAdapter for ExternalBackendAdapter {
+    async fn send_message(&self, message: &InboundMessage) -> Result<(), BackendError> {
+        let url = format!("http://127.0.0.1:{}/send", self.port);
+
+        tracing::info!(
+            port = %self.port,
+            credential_id = %message.credential_id,
+            "Sending message to external backend adapter"
+        );
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.token))
+            .json(message)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            let status = response.status().as_u16();
+            let message = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            Err(BackendError::BackendResponse { status, message })
+        }
+    }
+
+    fn supports_files(&self) -> bool {
+        false
+    }
+}
+
+/// Manages lifecycle of external backend adapter subprocesses
+#[allow(dead_code)]
+pub struct ExternalBackendManager {
+    backends_dir: String,
+    port_allocator: crate::adapter::PortAllocator,
+    gateway_url: String,
+    processes: tokio::sync::RwLock<HashMap<String, ExternalBackendProcess>>,
+}
+
+#[allow(dead_code)]
+pub struct ExternalBackendProcess {
+    pub instance_id: String,
+    pub port: u16,
+    pub token: String,
+    pub process: tokio::process::Child,
+    pub adapter_dir: String,
+}
+
+#[allow(dead_code)]
+impl ExternalBackendManager {
+    pub fn new(backends_dir: String, port_range: (u16, u16), gateway_listen: &str) -> Self {
+        let gateway_url = if gateway_listen.starts_with("0.0.0.0") {
+            format!(
+                "http://127.0.0.1:{}",
+                gateway_listen.split(':').next_back().unwrap_or("8080")
+            )
+        } else {
+            format!("http://{}", gateway_listen)
+        };
+
+        Self {
+            backends_dir,
+            port_allocator: crate::adapter::PortAllocator::new(port_range),
+            gateway_url,
+            processes: tokio::sync::RwLock::new(HashMap::new()),
+        }
+    }
+
+    pub async fn spawn(
+        &self,
+        credential_id: &str,
+        adapter_dir_override: Option<&str>,
+        backend_name: &str,
+        _token: &str,
+        config: Option<&serde_json::Value>,
+    ) -> Result<(u16, String), BackendError> {
+        let adapter_dir = adapter_dir_override
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(&self.backends_dir).join(backend_name));
+
+        let adapter_def = crate::adapter::load_adapter_def(&adapter_dir).map_err(|e| {
+            BackendError::InvalidConfig(format!("Failed to load backend adapter def: {}", e))
+        })?;
+
+        let port = self.port_allocator.allocate().await.ok_or_else(|| {
+            BackendError::InvalidConfig("No available ports for backend adapter".to_string())
+        })?;
+
+        let instance_id = format!("backend_{}_{}", backend_name, uuid::Uuid::new_v4());
+        let backend_token = uuid::Uuid::new_v4().to_string();
+
+        let mut cmd = tokio::process::Command::new(&adapter_def.command);
+        cmd.args(&adapter_def.args)
+            .current_dir(&adapter_dir)
+            .env("INSTANCE_ID", &instance_id)
+            .env("BACKEND_PORT", port.to_string())
+            .env("GATEWAY_URL", &self.gateway_url)
+            .env("BACKEND_TOKEN", &backend_token)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+
+        if let Some(cfg) = config {
+            cmd.env(
+                "BACKEND_CONFIG",
+                serde_json::to_string(cfg).unwrap_or_default(),
+            );
+        }
+
+        tracing::info!(
+            credential_id = %credential_id,
+            backend = %backend_name,
+            port = %port,
+            instance_id = %instance_id,
+            "Spawning external backend adapter process"
+        );
+
+        let process = match cmd.spawn() {
+            Ok(p) => p,
+            Err(e) => {
+                self.port_allocator.release(port).await;
+                return Err(BackendError::InvalidConfig(format!(
+                    "Failed to spawn backend adapter process: {}",
+                    e
+                )));
+            }
+        };
+
+        let mut processes = self.processes.write().await;
+        processes.insert(
+            credential_id.to_string(),
+            ExternalBackendProcess {
+                instance_id,
+                port,
+                token: backend_token.clone(),
+                process,
+                adapter_dir: adapter_dir.to_string_lossy().to_string(),
+            },
+        );
+
+        Ok((port, backend_token))
+    }
+
+    pub async fn get_port(&self, credential_id: &str) -> Option<u16> {
+        let processes = self.processes.read().await;
+        processes.get(credential_id).map(|p| p.port)
+    }
+
+    pub async fn stop(&self, credential_id: &str) {
+        let mut processes = self.processes.write().await;
+        if let Some(mut process) = processes.remove(credential_id) {
+            let _ = process.process.kill().await;
+            let _ = process.process.wait().await;
+            self.port_allocator.release(process.port).await;
+            tracing::info!(
+                credential_id = %credential_id,
+                port = %process.port,
+                "Stopped external backend adapter"
+            );
+        }
+    }
+}
+
 pub fn create_adapter(
     target: &TargetConfig,
     gateway_ctx: Option<&GatewayContext>,
@@ -327,6 +514,17 @@ pub fn create_adapter(
             gateway_ctx,
             credential_config,
         )?)),
+        BackendProtocol::External => {
+            let port = target.port.ok_or_else(|| {
+                BackendError::InvalidConfig(
+                    "External backend adapter requires 'port' in target config".to_string(),
+                )
+            })?;
+            Ok(Arc::new(ExternalBackendAdapter::new(
+                port,
+                target.token.clone(),
+            )?))
+        }
     }
 }
 
@@ -352,6 +550,8 @@ mod tests {
             base_url: Some("http://localhost:4096".to_string()),
             token: token.to_string(),
             poll_interval_ms: None,
+            adapter_dir: None,
+            port: None,
         }
     }
 
@@ -385,6 +585,8 @@ mod tests {
             base_url: None,
             token: "test".to_string(),
             poll_interval_ms: None,
+            adapter_dir: None,
+            port: None,
         };
 
         let result = PipelitAdapter::new(&target, None, None);
@@ -399,6 +601,8 @@ mod tests {
             base_url: None,
             token: "test".to_string(),
             poll_interval_ms: None,
+            adapter_dir: None,
+            port: None,
         };
 
         let adapter = PipelitAdapter::new(&target, None, None).unwrap();
@@ -413,6 +617,8 @@ mod tests {
             base_url: None,
             token: "test".to_string(),
             poll_interval_ms: None,
+            adapter_dir: None,
+            port: None,
         };
 
         let result = OpencodeAdapter::new(&target, None, None);
@@ -427,6 +633,8 @@ mod tests {
             base_url: Some("http://localhost:4096".to_string()),
             token: "test".to_string(),
             poll_interval_ms: Some(1000),
+            adapter_dir: None,
+            port: None,
         };
 
         let adapter = OpencodeAdapter::new(&target, None, None).unwrap();
@@ -537,5 +745,61 @@ mod tests {
             !adapter.supports_files(),
             "OpencodeAdapter should not support files"
         );
+    }
+
+    #[test]
+    fn test_external_backend_adapter_creation() {
+        let adapter = ExternalBackendAdapter::new(9200, "test_token".to_string()).unwrap();
+        assert_eq!(adapter.port, 9200);
+        assert_eq!(adapter.token, "test_token");
+    }
+
+    #[test]
+    fn test_external_backend_adapter_supports_files() {
+        let adapter = ExternalBackendAdapter::new(9200, "token".to_string()).unwrap();
+        assert!(
+            !adapter.supports_files(),
+            "ExternalBackendAdapter should not support files"
+        );
+    }
+
+    #[test]
+    fn test_create_adapter_external_requires_port() {
+        let target = TargetConfig {
+            protocol: BackendProtocol::External,
+            inbound_url: None,
+            base_url: None,
+            token: "test".to_string(),
+            poll_interval_ms: None,
+            adapter_dir: Some("./backends/opencode".to_string()),
+            port: None,
+        };
+
+        let result = create_adapter(&target, None, None);
+        assert!(result.is_err());
+        let err_str = match result {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("Expected error"),
+        };
+        assert!(
+            err_str.contains("port"),
+            "Error should mention 'port', got: {err_str}"
+        );
+    }
+
+    #[test]
+    fn test_create_adapter_external_with_port() {
+        let target = TargetConfig {
+            protocol: BackendProtocol::External,
+            inbound_url: None,
+            base_url: None,
+            token: "ext_token".to_string(),
+            poll_interval_ms: None,
+            adapter_dir: Some("./backends/opencode".to_string()),
+            port: Some(9200),
+        };
+
+        let result = create_adapter(&target, None, None);
+        assert!(result.is_ok(), "External adapter with port should succeed");
     }
 }
