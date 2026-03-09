@@ -133,6 +133,77 @@ export class TestGateway {
     await pollHealth(this.gatewayUrl, 10000);
   }
 
+  async startWithOpencodeConfig(opencodePort: number): Promise<void> {
+    this._gatewayPort = await findFreePort();
+    this.fileCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-gateway-files-'));
+    const config = {
+      gateway: {
+        listen: `127.0.0.1:${this._gatewayPort}`,
+        admin_token: 'test_admin_token',
+        default_target: {
+          protocol: 'opencode',
+          base_url: `http://127.0.0.1:${opencodePort}`,
+          token: 'testuser:testpass',
+        },
+        adapters_dir: '../adapters',
+        adapter_port_range: [19000, 19100],
+        file_cache: {
+          directory: this.fileCacheDir,
+          ttl_hours: 24,
+          max_cache_size_mb: 100,
+          cleanup_interval_minutes: 60,
+          max_file_size_mb: 10,
+          allowed_mime_types: [
+            'image/jpeg',
+            'image/png',
+            'text/plain',
+            'application/pdf',
+            'application/octet-stream',
+          ],
+        },
+      },
+      auth: {
+        send_token: 'test_send_token',
+      },
+      health_checks: {},
+      credentials: {
+        test_opencode: {
+          adapter: 'generic',
+          token: 'generic_token',
+          active: true,
+          emergency: false,
+          route: { channel: 'test' },
+          target: {
+            protocol: 'opencode',
+            base_url: `http://127.0.0.1:${opencodePort}`,
+            token: 'testuser:testpass',
+          },
+          config: {
+            model: { providerID: 'test', modelID: 'test-model' },
+          },
+        },
+      },
+    };
+
+    this.configPath = path.join(
+      os.tmpdir(),
+      `test-gateway-config-${Date.now()}-${Math.random().toString(36).slice(2)}.json`
+    );
+    fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2));
+
+    const binary = findGatewayBinary();
+    this.process = child_process.spawn(binary, [], {
+      env: { ...process.env, GATEWAY_CONFIG: this.configPath },
+      stdio: 'ignore',
+    });
+
+    this.process.on('error', (err) => {
+      throw new Error(`Gateway process error: ${err.message}`);
+    });
+
+    await pollHealth(this.gatewayUrl, 10000);
+  }
+
   async startWithTelegram(backend: MockBackend, telegramApiRoot: string): Promise<void> {
     this._gatewayPort = await findFreePort();
     this.fileCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-gateway-files-'));
