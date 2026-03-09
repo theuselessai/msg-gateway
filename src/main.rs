@@ -5,6 +5,7 @@ mod config;
 mod error;
 mod files;
 mod generic;
+mod guardrail;
 mod health;
 mod manager;
 mod message;
@@ -34,9 +35,9 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting msg-gateway");
 
     // Load config
-    let config_path = std::env::var("GATEWAY_CONFIG").unwrap_or_else(|_| "config.json".to_string());
+    let config_path = config::resolve_config_path();
 
-    let config = config::load_config(&config_path)?;
+    let config = config::load_config(config_path.to_str().unwrap_or("config.json"))?;
     tracing::info!(listen = %config.gateway.listen, "Configuration loaded");
 
     // Create adapter instance manager
@@ -196,7 +197,7 @@ async fn main() -> anyhow::Result<()> {
     let watcher_state = state.clone();
     let watcher_manager = manager.clone();
     let watcher_adapter_manager = adapter_manager.clone();
-    let watcher_path = config_path.clone();
+    let watcher_path = config_path.to_string_lossy().into_owned();
     tokio::spawn(async move {
         if let Err(e) = watcher::watch_config(
             watcher_path,
