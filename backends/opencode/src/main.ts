@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "crypto";
 import Fastify from "fastify";
+import { createEventSource } from "eventsource-client";
 
 const INSTANCE_ID = process.env.INSTANCE_ID ?? "unknown";
 const BACKEND_PORT = parseInt(process.env.BACKEND_PORT ?? "9200", 10);
@@ -72,6 +73,12 @@ interface InboundMessage {
 
 // Session management: {credential_id}:{chat_id} -> session_id
 const sessions = new Map<string, string>();
+
+// Pending sessions waiting for SSE response: sessionId -> { credentialId, chatId, timeoutHandle }
+const pending = new Map<string, { credentialId: string; chatId: string; timeoutHandle: ReturnType<typeof setTimeout> }>();
+const PENDING_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+let shuttingDown = false;
 
 async function retry<T>(
   fn: () => Promise<T>,
@@ -152,56 +159,78 @@ async function getOrCreateSession(
   return sessionId;
 }
 
-async function sendToOpenCode(message: InboundMessage): Promise<string> {
-  const chatId = message.source.chat_id;
-  const sessionId = await getOrCreateSession(message.credential_id, chatId);
-
-  log(
-    `Sending message to OpenCode session=${sessionId} chat=${chatId}`,
-  );
-
-  const msgBody = {
-    model: backendConfig.model,
-    parts: [{ type: "text", text: message.text }],
-  };
-
-  const resp = await fetch(
-    `${backendConfig.base_url}/session/${sessionId}/message`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: basicAuthHeader(),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(msgBody),
-      signal: AbortSignal.timeout(60_000),
-    },
-  );
-
+async function fetchAndRelay(sessionId: string, credentialId: string, chatId: string): Promise<void> {
+  const resp = await fetch(`${backendConfig.base_url}/session/${sessionId}/message`, {
+    headers: { Authorization: basicAuthHeader() },
+    signal: AbortSignal.timeout(30_000),
+  });
   if (!resp.ok) {
-    const body = await resp.text();
-    // Invalidate stale session on auth/not-found errors so next request recreates it
-    if (resp.status === 401 || resp.status === 403 || resp.status === 404) {
-      const sessionKey = `${message.credential_id}:${chatId}`;
-      sessions.delete(sessionKey);
-      log(`Invalidated stale session for ${sessionKey} (HTTP ${resp.status})`);
-    }
-    throw new Error(
-      `OpenCode message failed: ${resp.status} ${body}`,
-    );
+    log(`Failed to fetch messages for session ${sessionId}: ${resp.status}`);
+    return;
   }
+  const messages = await resp.json() as Array<{ info: { role: string }; parts: Array<{ type: string; text?: string }> }>;
+  // find last assistant message
+  const assistantMsgs = messages.filter(m => m.info.role === "assistant");
+  if (assistantMsgs.length === 0) {
+    log(`No assistant message found for session ${sessionId}`);
+    return;
+  }
+  const last = assistantMsgs[assistantMsgs.length - 1];
+  const text = last.parts
+    .filter(p => p.type === "text" && p.text)
+    .map(p => p.text!)
+    .join("\n\n")
+    .trim();
+  if (!text) {
+    log(`Empty text response for session ${sessionId}`);
+    return;
+  }
+  log(`Relaying response to gateway for chat ${chatId}`);
+  await relayToGateway(credentialId, chatId, text);
+}
 
-  const respBody = (await resp.json()) as {
-    parts?: Array<{ type: string; text?: string }>;
-  };
+function handleEvent(event: { type: string; properties: Record<string, unknown> }): void {
+  if (event.type === "session.idle") {
+    const sessionId = event.properties.sessionID as string;
+    const entry = pending.get(sessionId);
+    if (!entry) return;
+    clearTimeout(entry.timeoutHandle);
+    pending.delete(sessionId);
+    // fetch response and relay — fire and forget
+    fetchAndRelay(sessionId, entry.credentialId, entry.chatId).catch(err => {
+      log(`Error relaying response for session ${sessionId}: ${err}`);
+    });
+  } else if (event.type === "session.error") {
+    const sessionId = event.properties.sessionID as string | undefined;
+    if (sessionId) {
+      const entry = pending.get(sessionId);
+      if (entry) {
+        clearTimeout(entry.timeoutHandle);
+        pending.delete(sessionId);
+        log(`Session error for ${sessionId}: ${JSON.stringify(event.properties.error)}`);
+      }
+    }
+  }
+}
 
-  const aiResponse =
-    respBody.parts
-      ?.filter((p) => p.type === "text" && p.text)
-      .map((p) => p.text)
-      .join("\n\n") ?? "";
-
-  return aiResponse;
+function startEventStream(): ReturnType<typeof createEventSource> {
+  const es = createEventSource({
+    url: `${backendConfig.base_url}/event`,
+    headers: { Authorization: basicAuthHeader() },
+    onMessage: ({ data }) => {
+      if (!data) return;
+      try {
+        const globalEvent = JSON.parse(data) as { payload: { type: string; properties: Record<string, unknown> } };
+        handleEvent(globalEvent.payload);
+      } catch { /* ignore parse errors */ }
+    },
+    onDisconnect: () => {
+      if (!shuttingDown) {
+        log("SSE disconnected, will reconnect automatically");
+      }
+    },
+  });
+  return es;
 }
 
 async function relayToGateway(
@@ -262,32 +291,61 @@ app.post<{ Body: InboundMessage }>("/send", async (request, reply) => {
   log(`Received message from ${who} in chat ${chatId}: ${truncatedText}`);
 
   try {
-    const aiResponse = await sendToOpenCode(message);
+    const sessionId = await getOrCreateSession(message.credential_id, message.source.chat_id);
 
-    if (!aiResponse || aiResponse.trim().length === 0) {
-      log(`OpenCode returned empty response for chat ${chatId}, skipping relay`);
-      return { status: "ok" };
+    // Fire and forget: submit to OpenCode asynchronously
+    const asyncResp = await fetch(
+      `${backendConfig.base_url}/session/${sessionId}/prompt_async`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: basicAuthHeader(),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: backendConfig.model,
+          parts: [{ type: "text", text: message.text }],
+        }),
+        signal: AbortSignal.timeout(10_000),
+      }
+    );
+
+    if (!asyncResp.ok && asyncResp.status !== 204) {
+      // Handle stale session same as before
+      if (asyncResp.status === 401 || asyncResp.status === 403 || asyncResp.status === 404) {
+        const sessionKey = `${message.credential_id}:${message.source.chat_id}`;
+        sessions.delete(sessionKey);
+        log(`Invalidated stale session for ${sessionKey} (HTTP ${asyncResp.status})`);
+      }
+      const body = await asyncResp.text();
+      throw new Error(`OpenCode prompt_async failed: ${asyncResp.status} ${body}`);
     }
 
-    log(`Relaying OpenCode response to gateway for chat ${chatId}`);
-    await relayToGateway(message.credential_id, chatId, aiResponse);
+    // Register pending — SSE will deliver the response
+    const existing = pending.get(sessionId);
+    if (existing) clearTimeout(existing.timeoutHandle);
+    const timeoutHandle = setTimeout(() => {
+      pending.delete(sessionId);
+      log(`Pending response timeout for session ${sessionId}`);
+    }, PENDING_TIMEOUT_MS);
+    pending.set(sessionId, { credentialId: message.credential_id, chatId: message.source.chat_id, timeoutHandle });
 
+    log(`Message submitted async, waiting for SSE response (session=${sessionId})`);
     return { status: "ok" };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    log(`Error processing message: ${msg}`);
+    log(`Error submitting message: ${msg}`);
     reply.status(500);
     return { error: msg };
   }
 });
 
-let shuttingDown = false;
-
-async function shutdown(signal: string): Promise<void> {
+async function shutdown(signal: string, eventSource: ReturnType<typeof createEventSource>): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
 
   log(`Received ${signal}, shutting down...`);
+  eventSource.close();
   try {
     await app.close();
   } catch (err) {
@@ -296,9 +354,6 @@ async function shutdown(signal: string): Promise<void> {
   log("Backend adapter stopped");
   process.exit(0);
 }
-
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
 
 async function main(): Promise<void> {
   log("Starting OpenCode backend adapter");
@@ -321,6 +376,11 @@ async function main(): Promise<void> {
   if (!GATEWAY_SEND_TOKEN) {
     throw new Error("GATEWAY_SEND_TOKEN environment variable must be set");
   }
+
+  const eventSource = startEventStream();
+
+  process.on("SIGTERM", () => shutdown("SIGTERM", eventSource));
+  process.on("SIGINT", () => shutdown("SIGINT", eventSource));
 
   await app.listen({
     port: BACKEND_PORT,
