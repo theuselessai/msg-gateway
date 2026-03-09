@@ -55,6 +55,10 @@ fn default_backend_port_range() -> (u16, u16) {
     (9200, 9300)
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// Backend protocol type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -65,6 +69,84 @@ pub enum BackendProtocol {
     Opencode,
     /// External: subprocess-managed backend adapter (any language)
     External,
+}
+
+/// Guardrail evaluation type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
+pub enum GuardrailType {
+    /// CEL (Common Expression Language) evaluation
+    #[default]
+    Cel,
+    /// LLM-based evaluation (placeholder for future)
+    Llm,
+}
+
+/// Action to take when guardrail rule matches
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
+pub enum GuardrailAction {
+    /// Block the message
+    #[default]
+    Block,
+    /// Log the violation
+    Log,
+}
+
+/// Direction of message flow to apply guardrail
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
+pub enum GuardrailDirection {
+    /// Inbound messages only (adapter → gateway)
+    #[default]
+    Inbound,
+    /// Outbound messages only (gateway → adapter)
+    Outbound,
+    /// Both inbound and outbound
+    Both,
+}
+
+/// Behavior when guardrail evaluation errors
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
+pub enum GuardrailOnError {
+    /// Allow the message (fail-open)
+    #[default]
+    Allow,
+    /// Block the message (fail-closed)
+    Block,
+}
+
+/// Guardrail rule configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct GuardrailRule {
+    /// Rule name
+    pub name: String,
+    /// Evaluation type
+    #[serde(default)]
+    pub r#type: GuardrailType,
+    /// CEL expression to evaluate
+    pub expression: String,
+    /// Action when rule matches
+    #[serde(default)]
+    pub action: GuardrailAction,
+    /// Message direction to apply rule
+    #[serde(default)]
+    pub direction: GuardrailDirection,
+    /// Behavior on evaluation error
+    #[serde(default)]
+    pub on_error: GuardrailOnError,
+    /// Message to return if blocked
+    #[serde(default)]
+    pub reject_message: Option<String>,
+    /// Whether rule is enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 /// Backend configuration
@@ -94,10 +176,6 @@ pub struct BackendConfig {
     /// Opaque config blob passed as BACKEND_CONFIG env var to external subprocess
     #[serde(default)]
     pub config: Option<serde_json::Value>,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -689,5 +767,142 @@ mod tests {
         let config: Config = serde_json::from_str(json).unwrap();
         assert_eq!(config.gateway.default_backend, Some("opencode".to_string()));
         assert!(config.backends.is_empty());
+    }
+
+    // ==================== GuardrailRule Tests ====================
+
+    #[test]
+    fn test_guardrail_rule_minimal_json() {
+        let json = r#"{"name":"test","expression":"true"}"#;
+        let rule: GuardrailRule = serde_json::from_str(json).unwrap();
+
+        assert_eq!(rule.name, "test");
+        assert_eq!(rule.expression, "true");
+        assert_eq!(rule.r#type, GuardrailType::Cel);
+        assert_eq!(rule.action, GuardrailAction::Block);
+        assert_eq!(rule.direction, GuardrailDirection::Inbound);
+        assert_eq!(rule.on_error, GuardrailOnError::Allow);
+        assert_eq!(rule.reject_message, None);
+        assert!(rule.enabled);
+    }
+
+    #[test]
+    fn test_guardrail_rule_full_json() {
+        let json = r#"{
+            "name":"test_rule",
+            "type":"cel",
+            "expression":"message.text.size() > 100",
+            "action":"log",
+            "direction":"both",
+            "on_error":"block",
+            "reject_message":"Message too long",
+            "enabled":false
+        }"#;
+        let rule: GuardrailRule = serde_json::from_str(json).unwrap();
+
+        assert_eq!(rule.name, "test_rule");
+        assert_eq!(rule.r#type, GuardrailType::Cel);
+        assert_eq!(rule.expression, "message.text.size() > 100");
+        assert_eq!(rule.action, GuardrailAction::Log);
+        assert_eq!(rule.direction, GuardrailDirection::Both);
+        assert_eq!(rule.on_error, GuardrailOnError::Block);
+        assert_eq!(rule.reject_message, Some("Message too long".to_string()));
+        assert!(!rule.enabled);
+    }
+
+    #[test]
+    fn test_guardrail_rule_enabled_default() {
+        let json = r#"{"name":"test","expression":"true"}"#;
+        let rule: GuardrailRule = serde_json::from_str(json).unwrap();
+        assert!(rule.enabled);
+    }
+
+    #[test]
+    fn test_guardrail_rule_enabled_false() {
+        let json = r#"{"name":"test","expression":"true","enabled":false}"#;
+        let rule: GuardrailRule = serde_json::from_str(json).unwrap();
+        assert!(!rule.enabled);
+    }
+
+    #[test]
+    fn test_guardrail_rule_roundtrip() {
+        let rule = GuardrailRule {
+            name: "test".to_string(),
+            r#type: GuardrailType::Cel,
+            expression: "true".to_string(),
+            action: GuardrailAction::Block,
+            direction: GuardrailDirection::Inbound,
+            on_error: GuardrailOnError::Allow,
+            reject_message: Some("rejected".to_string()),
+            enabled: true,
+        };
+
+        let json = serde_json::to_string(&rule).unwrap();
+        let parsed: GuardrailRule = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.name, rule.name);
+        assert_eq!(parsed.r#type, rule.r#type);
+        assert_eq!(parsed.expression, rule.expression);
+        assert_eq!(parsed.action, rule.action);
+        assert_eq!(parsed.direction, rule.direction);
+        assert_eq!(parsed.on_error, rule.on_error);
+        assert_eq!(parsed.reject_message, rule.reject_message);
+        assert_eq!(parsed.enabled, rule.enabled);
+    }
+
+    #[test]
+    fn test_guardrail_type_default() {
+        let json = r#"{"name":"test","expression":"true"}"#;
+        let rule: GuardrailRule = serde_json::from_str(json).unwrap();
+        assert_eq!(rule.r#type, GuardrailType::Cel);
+    }
+
+    #[test]
+    fn test_guardrail_action_default() {
+        let json = r#"{"name":"test","expression":"true"}"#;
+        let rule: GuardrailRule = serde_json::from_str(json).unwrap();
+        assert_eq!(rule.action, GuardrailAction::Block);
+    }
+
+    #[test]
+    fn test_guardrail_direction_default() {
+        let json = r#"{"name":"test","expression":"true"}"#;
+        let rule: GuardrailRule = serde_json::from_str(json).unwrap();
+        assert_eq!(rule.direction, GuardrailDirection::Inbound);
+    }
+
+    #[test]
+    fn test_guardrail_on_error_default() {
+        let json = r#"{"name":"test","expression":"true"}"#;
+        let rule: GuardrailRule = serde_json::from_str(json).unwrap();
+        assert_eq!(rule.on_error, GuardrailOnError::Allow);
+    }
+
+    #[test]
+    fn test_guardrail_invalid_action_error() {
+        let json = r#"{"name":"test","expression":"true","action":"invalid"}"#;
+        let result: Result<GuardrailRule, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_guardrail_invalid_type_error() {
+        let json = r#"{"name":"test","expression":"true","type":"invalid"}"#;
+        let result: Result<GuardrailRule, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_guardrail_invalid_direction_error() {
+        let json = r#"{"name":"test","expression":"true","direction":"invalid"}"#;
+        let result: Result<GuardrailRule, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_guardrail_invalid_on_error_error() {
+        let json = r#"{"name":"test","expression":"true","on_error":"invalid"}"#;
+        let result: Result<GuardrailRule, _> = serde_json::from_str(json);
+        assert!(result.is_err());
     }
 }
