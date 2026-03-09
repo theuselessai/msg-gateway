@@ -136,6 +136,8 @@ export class TestGateway {
   async startWithOpencodeConfig(opencodePort: number): Promise<void> {
     this._gatewayPort = await findFreePort();
     this.fileCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-gateway-files-'));
+    const adapterPortBase = 20000 + Math.floor(Math.random() * 9000);
+    this._adapterPortRange = [adapterPortBase, adapterPortBase + 100];
     const config = {
       gateway: {
         listen: `127.0.0.1:${this._gatewayPort}`,
@@ -146,7 +148,7 @@ export class TestGateway {
           token: 'testuser:testpass',
         },
         adapters_dir: '../adapters',
-        adapter_port_range: [19000, 19100],
+        adapter_port_range: this._adapterPortRange,
         file_cache: {
           directory: this.fileCacheDir,
           ttl_hours: 24,
