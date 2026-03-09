@@ -326,13 +326,21 @@ async fn send_recovery_notification(state: &AppState, config: &HealthCheckConfig
 async fn drain_buffered_messages(state: &AppState, messages: Vec<InboundMessage>) {
     use crate::backend::{create_adapter, resolve_target};
 
-    for message in messages {
-        let config = state.config.read().await;
+    // Hoist invariants outside the loop
+    let config = state.config.read().await;
+    let gateway_ctx = crate::backend::GatewayContext {
+        gateway_url: format!("http://{}", config.gateway.listen),
+        send_token: config.auth.send_token.clone(),
+    };
+    let default_target = config.gateway.default_target.clone();
+    drop(config);
 
-        // Resolve target for this message's credential
+    for message in messages {
+        // Per-message: only acquire lock for credential lookup
+        let config = state.config.read().await;
         let adapter = if let Some(credential) = config.credentials.get(&message.credential_id) {
-            let target = resolve_target(credential, &config.gateway.default_target);
-            match create_adapter(target) {
+            let target = resolve_target(credential, &default_target);
+            match create_adapter(target, Some(&gateway_ctx), credential.config.as_ref()) {
                 Ok(a) => a,
                 Err(e) => {
                     tracing::error!(
@@ -346,7 +354,7 @@ async fn drain_buffered_messages(state: &AppState, messages: Vec<InboundMessage>
             }
         } else {
             // Credential no longer exists, use default target
-            match create_adapter(&config.gateway.default_target) {
+            match create_adapter(&default_target, Some(&gateway_ctx), None) {
                 Ok(a) => a,
                 Err(e) => {
                     tracing::error!(

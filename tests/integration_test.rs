@@ -1286,3 +1286,470 @@ async fn test_send_to_generic_with_file_ids_includes_file_urls() {
         "file_url does not match expected download URL"
     );
 }
+
+// ============================================================================
+// OpenCode Backend Integration Tests
+// ============================================================================
+
+/// Captured HTTP request from mock OpenCode server
+#[derive(Debug, Clone)]
+struct MockCapturedRequest {
+    path: String,
+    headers: Vec<(String, String)>,
+    body: serde_json::Value,
+}
+
+/// Spawn a mock OpenCode HTTP server that implements:
+/// - POST /session → `{"id": "mock-session-id"}`
+/// - POST /session/{id}/message → AI response (or 500 if `error_on_message`)
+///
+/// Returns (port, captured_requests, join_handle).
+async fn spawn_mock_opencode(
+    error_on_message: bool,
+) -> (
+    u16,
+    Arc<std::sync::Mutex<Vec<MockCapturedRequest>>>,
+    tokio::task::JoinHandle<()>,
+) {
+    use axum::routing::post;
+
+    let captured: Arc<std::sync::Mutex<Vec<MockCapturedRequest>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    let cap_session = captured.clone();
+    let cap_message = captured.clone();
+
+    let app = axum::Router::new()
+        .route(
+            "/session",
+            post(move |headers: axum::http::HeaderMap, body: String| {
+                let cap = cap_session.clone();
+                async move {
+                    let body_json: serde_json::Value =
+                        serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+                    let hdrs: Vec<(String, String)> = headers
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+                        .collect();
+                    cap.lock().unwrap().push(MockCapturedRequest {
+                        path: "/session".to_string(),
+                        headers: hdrs,
+                        body: body_json,
+                    });
+                    axum::Json(serde_json::json!({"id": "mock-session-id"}))
+                }
+            }),
+        )
+        .route(
+            "/session/{id}/message",
+            post(
+                move |path: axum::extract::Path<String>,
+                      headers: axum::http::HeaderMap,
+                      body: String| {
+                    let cap = cap_message.clone();
+                    let session_id = path.0;
+                    async move {
+                        let body_json: serde_json::Value =
+                            serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+                        let hdrs: Vec<(String, String)> = headers
+                            .iter()
+                            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+                            .collect();
+                        cap.lock().unwrap().push(MockCapturedRequest {
+                            path: format!("/session/{}/message", session_id),
+                            headers: hdrs,
+                            body: body_json,
+                        });
+                        if error_on_message {
+                            Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+                        } else {
+                            Ok(axum::Json(serde_json::json!({
+                                "info": {
+                                    "id": "msg-1",
+                                    "role": "assistant",
+                                    "finish": "stop"
+                                },
+                                "parts": [{"type": "text", "text": "Mock AI response"}]
+                            })))
+                        }
+                    }
+                },
+            ),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    (port, captured, handle)
+}
+
+/// Create test config with an OpenCode backend credential ("test_opencode")
+fn test_config_with_opencode_backend(gateway_port: u16, opencode_port: u16) -> Config {
+    Config {
+        gateway: GatewayConfig {
+            listen: format!("127.0.0.1:{}", gateway_port),
+            admin_token: "test_admin_token".to_string(),
+            default_target: TargetConfig {
+                protocol: BackendProtocol::Pipelit,
+                inbound_url: Some("http://127.0.0.1:18000/inbound".to_string()),
+                base_url: None,
+                token: "test_backend_token".to_string(),
+                poll_interval_ms: None,
+            },
+            adapters_dir: "./adapters".to_string(),
+            adapter_port_range: (19000, 19100),
+            file_cache: None,
+        },
+        auth: AuthConfig {
+            send_token: "test_send_token".to_string(),
+        },
+        health_checks: HashMap::new(),
+        credentials: {
+            let mut creds = HashMap::new();
+            creds.insert(
+                "test_opencode".to_string(),
+                CredentialConfig {
+                    adapter: "generic".to_string(),
+                    token: "generic_token".to_string(),
+                    active: true,
+                    emergency: false,
+                    route: serde_json::json!({"channel": "test_opencode"}),
+                    config: Some(serde_json::json!({
+                        "model": {
+                            "providerID": "test",
+                            "modelID": "test-model"
+                        }
+                    })),
+                    target: Some(TargetConfig {
+                        protocol: BackendProtocol::Opencode,
+                        inbound_url: None,
+                        base_url: Some(format!("http://127.0.0.1:{}", opencode_port)),
+                        token: "testuser:testpass".to_string(),
+                        poll_interval_ms: None,
+                    }),
+                },
+            );
+            creds
+        },
+    }
+}
+
+/// Full roundtrip: generic inbound → OpenCode mock → self-relay → WS client receives response
+#[tokio::test]
+async fn test_opencode_backend_full_roundtrip() {
+    use futures_util::StreamExt;
+    use tokio_tungstenite::connect_async;
+
+    let (oc_port, captured, _oc_handle) = spawn_mock_opencode(false).await;
+    let gw_port = find_available_port().await;
+    let server = TestServer::new(test_config_with_opencode_backend(gw_port, oc_port)).await;
+    let client = server.client();
+
+    // Connect WebSocket to receive responses
+    let ws_url = format!(
+        "ws://127.0.0.1:{}/ws/chat/test_opencode/oc-rt-chat",
+        server.port
+    );
+    let request = http::Request::builder()
+        .uri(&ws_url)
+        .header("Authorization", "Bearer generic_token")
+        .header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Host", format!("127.0.0.1:{}", server.port))
+        .body(())
+        .unwrap();
+
+    let (ws_stream, _) = connect_async(request)
+        .await
+        .expect("WebSocket connect failed");
+    let (_write, mut read) = ws_stream.split();
+
+    // Give WS connection time to register
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Send message via generic inbound
+    let resp = client
+        .post(server.url("/api/v1/chat/test_opencode"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "Hello AI",
+            "chat_id": "oc-rt-chat",
+            "from": {"id": "user1", "display_name": "Test User"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 202);
+
+    // Wait for WebSocket message (background: inbound → OpenCode → self-relay → WS)
+    let ws_msg = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(msg) = read.next().await {
+            if let Ok(tokio_tungstenite::tungstenite::Message::Text(text)) = msg {
+                return text.to_string();
+            }
+        }
+        String::new()
+    })
+    .await
+    .expect("Timed out waiting for WebSocket message");
+
+    assert!(!ws_msg.is_empty(), "No WebSocket message received");
+    let ws_body: serde_json::Value =
+        serde_json::from_str(&ws_msg).expect("WS message is not valid JSON");
+    assert_eq!(ws_body["text"], "Mock AI response");
+
+    // Verify mock received both session creation and message
+    let reqs = captured.lock().unwrap();
+    assert!(
+        reqs.iter().any(|r| r.path == "/session"),
+        "Mock should have received session creation POST"
+    );
+    assert!(
+        reqs.iter().any(|r| r.path.contains("/message")),
+        "Mock should have received message POST"
+    );
+}
+
+/// Session reuse: 2 messages to same chat_id → 1 session creation, 2 message sends
+#[tokio::test]
+async fn test_opencode_backend_session_reuse() {
+    let (oc_port, captured, _oc_handle) = spawn_mock_opencode(false).await;
+    let gw_port = find_available_port().await;
+    let server = TestServer::new(test_config_with_opencode_backend(gw_port, oc_port)).await;
+    let client = server.client();
+
+    // Send first message
+    let resp = client
+        .post(server.url("/api/v1/chat/test_opencode"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "First message",
+            "chat_id": "oc-reuse-chat",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    // Wait for first request to complete
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Send second message with same chat_id
+    let resp = client
+        .post(server.url("/api/v1/chat/test_opencode"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "Second message",
+            "chat_id": "oc-reuse-chat",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    // Wait for second request to complete
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Verify: 1 session creation, 2 message sends
+    let reqs = captured.lock().unwrap();
+    let session_count = reqs.iter().filter(|r| r.path == "/session").count();
+    let message_count = reqs.iter().filter(|r| r.path.contains("/message")).count();
+
+    assert_eq!(session_count, 1, "Should create session only once");
+    assert_eq!(message_count, 2, "Should send 2 messages");
+}
+
+/// Verify that different credentials with the same chat_id create separate OpenCode sessions
+#[tokio::test]
+async fn test_opencode_backend_session_isolation() {
+    let (oc_port, captured, _oc_handle) = spawn_mock_opencode(false).await;
+    let gw_port = find_available_port().await;
+
+    // Create config with two credentials pointing to same OpenCode backend
+    let mut config = test_config_with_opencode_backend(gw_port, oc_port);
+    config.credentials.insert(
+        "test_opencode_beta".to_string(),
+        CredentialConfig {
+            adapter: "generic".to_string(),
+            token: "generic_token_beta".to_string(),
+            active: true,
+            emergency: false,
+            route: serde_json::json!({"channel": "test_opencode_beta"}),
+            config: Some(serde_json::json!({
+                "model": {
+                    "providerID": "test",
+                    "modelID": "test-model"
+                }
+            })),
+            target: Some(TargetConfig {
+                protocol: BackendProtocol::Opencode,
+                inbound_url: None,
+                base_url: Some(format!("http://127.0.0.1:{}", oc_port)),
+                token: "testuser:testpass".to_string(),
+                poll_interval_ms: None,
+            }),
+        },
+    );
+
+    let server = TestServer::new(config).await;
+    let client = server.client();
+
+    // Send message from credential alpha
+    let resp = client
+        .post(server.url("/api/v1/chat/test_opencode"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "Message from alpha",
+            "chat_id": "iso-shared-chat",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    // Wait for first request to complete
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Send message from credential beta (same chat_id)
+    let resp = client
+        .post(server.url("/api/v1/chat/test_opencode_beta"))
+        .header("Authorization", "Bearer generic_token_beta")
+        .json(&serde_json::json!({
+            "text": "Message from beta",
+            "chat_id": "iso-shared-chat",
+            "from": {"id": "user2"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    // Wait for second request to complete
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Verify: 2 session creations (one per credential), 2 message sends
+    let reqs = captured.lock().unwrap();
+    let session_count = reqs.iter().filter(|r| r.path == "/session").count();
+    let message_count = reqs.iter().filter(|r| r.path.contains("/message")).count();
+
+    assert_eq!(
+        session_count, 2,
+        "Should create separate sessions for different credentials"
+    );
+    assert_eq!(message_count, 2, "Should send 2 messages");
+}
+
+/// Verify Authorization header sent to mock is Basic auth with base64("testuser:testpass")
+#[tokio::test]
+async fn test_opencode_backend_auth_basic() {
+    let (oc_port, captured, _oc_handle) = spawn_mock_opencode(false).await;
+    let gw_port = find_available_port().await;
+    let server = TestServer::new(test_config_with_opencode_backend(gw_port, oc_port)).await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_opencode"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "Check auth",
+            "chat_id": "oc-auth-chat",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    // Wait for background task
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    let reqs = captured.lock().unwrap();
+    let session_req = reqs
+        .iter()
+        .find(|r| r.path == "/session")
+        .expect("Session request not found");
+
+    let auth_header = session_req
+        .headers
+        .iter()
+        .find(|(k, _)| k == "authorization")
+        .map(|(_, v)| v.as_str())
+        .expect("Authorization header not found");
+
+    // base64("testuser:testpass") = "dGVzdHVzZXI6dGVzdHBhc3M="
+    assert_eq!(auth_header, "Basic dGVzdHVzZXI6dGVzdHBhc3M=");
+}
+
+/// Verify request body to /session/:id/message contains the model config
+#[tokio::test]
+async fn test_opencode_backend_model_config_sent() {
+    let (oc_port, captured, _oc_handle) = spawn_mock_opencode(false).await;
+    let gw_port = find_available_port().await;
+    let server = TestServer::new(test_config_with_opencode_backend(gw_port, oc_port)).await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_opencode"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "Check model config",
+            "chat_id": "oc-model-chat",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    // Wait for background task
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    let reqs = captured.lock().unwrap();
+    let msg_req = reqs
+        .iter()
+        .find(|r| r.path.contains("/message"))
+        .expect("Message request not found");
+
+    assert_eq!(msg_req.body["model"]["providerID"], "test");
+    assert_eq!(msg_req.body["model"]["modelID"], "test-model");
+}
+
+/// Mock returns 500 for message — gateway still returns 202 and doesn't crash
+#[tokio::test]
+async fn test_opencode_backend_error_response() {
+    let (oc_port, _captured, _oc_handle) = spawn_mock_opencode(true).await;
+    let gw_port = find_available_port().await;
+    let server = TestServer::new(test_config_with_opencode_backend(gw_port, oc_port)).await;
+    let client = server.client();
+
+    // Send message — gateway returns 202 (fire-and-forget), backend error is internal
+    let resp = client
+        .post(server.url("/api/v1/chat/test_opencode"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "Will fail",
+            "chat_id": "oc-err-chat",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    // Wait for background task to process (and error internally)
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Verify gateway is still alive and responsive
+    let health_resp = client.get(server.url("/health")).send().await.unwrap();
+    assert!(health_resp.status().is_success());
+}

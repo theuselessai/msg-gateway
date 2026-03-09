@@ -2,6 +2,7 @@ import { World, setWorldConstructor, After, IWorldOptions, setDefaultTimeout } f
 import { MockBackend } from '../../support/mock-backend';
 import { MockTelegramServer } from '../../support/mock-telegram-server';
 import { MockFileServer } from '../../support/mock-file-server';
+import { MockOpencodeServer } from '../../support/mock-opencode-server';
 import { TestGateway } from '../../support/test-gateway';
 import WebSocket from 'ws';
 
@@ -12,6 +13,7 @@ export class TestWorld extends World {
   backend: MockBackend | null = null;
   mockTelegramServer: MockTelegramServer | null = null;
   mockFileServer: MockFileServer | null = null;
+  mockOpencodeServer: MockOpencodeServer | null = null;
   wsClient: WebSocket | null = null;
   wsMessages: unknown[] = [];
   lastResponse: Response | null = null;
@@ -94,5 +96,9 @@ After(async function (this: TestWorld) {
   if (this.mockFileServer) {
     await this.mockFileServer.stop();
     this.mockFileServer = null;
+  }
+  if (this.mockOpencodeServer) {
+    await this.mockOpencodeServer.stop();
+    this.mockOpencodeServer = null;
   }
 });

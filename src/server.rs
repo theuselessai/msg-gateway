@@ -530,8 +530,13 @@ async fn adapter_inbound(
 
     // Resolve target for this credential
     let target = crate::backend::resolve_target(credential, &config.gateway.default_target);
-    let backend_adapter = crate::backend::create_adapter(target)
-        .map_err(|e| AppError::Internal(format!("Failed to create backend adapter: {}", e)))?;
+    let gateway_ctx = crate::backend::GatewayContext {
+        gateway_url: format!("http://{}", config.gateway.listen),
+        send_token: config.auth.send_token.clone(),
+    };
+    let backend_adapter =
+        crate::backend::create_adapter(target, Some(&gateway_ctx), credential.config.as_ref())
+            .map_err(|e| AppError::Internal(format!("Failed to create backend adapter: {}", e)))?;
     drop(config);
 
     // Build normalized inbound message
