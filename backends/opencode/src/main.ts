@@ -233,7 +233,8 @@ app.post<{ Body: InboundMessage }>("/send", async (request, reply) => {
     message.source.from.username ??
     message.source.from.id;
 
-  log(`Received message from ${who} in chat ${chatId}: ${message.text.length > 80 ? message.text.slice(0, 80) + "..." : message.text}`);
+  const truncatedText = message.text.length > 80 ? message.text.slice(0, 80) + "..." : message.text;
+  log(`Received message from ${who} in chat ${chatId}: ${truncatedText}`);
 
   try {
     const aiResponse = await sendToOpenCode(message);
@@ -285,6 +286,9 @@ async function main(): Promise<void> {
   }
   if (!backendConfig.base_url) {
     throw new Error("BACKEND_CONFIG must include 'base_url'");
+  }
+  if (!backendConfig.token) {
+    throw new Error("BACKEND_CONFIG must include non-empty 'token'");
   }
   if (!backendConfig.model) {
     throw new Error("BACKEND_CONFIG must include 'model' with providerID and modelID");
