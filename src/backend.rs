@@ -318,15 +318,14 @@ pub struct ExternalBackendAdapter {
 }
 
 impl ExternalBackendAdapter {
-    pub fn new(port: u16, token: String) -> Self {
-        Self {
+    pub fn new(port: u16, token: String) -> Result<Self, BackendError> {
+        Ok(Self {
             port,
             token,
             client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(120))
-                .build()
-                .expect("Failed to create HTTP client"),
-        }
+                .build()?,
+        })
     }
 }
 
@@ -453,9 +452,16 @@ impl ExternalBackendManager {
             "Spawning external backend adapter process"
         );
 
-        let process = cmd.spawn().map_err(|e| {
-            BackendError::InvalidConfig(format!("Failed to spawn backend adapter process: {}", e))
-        })?;
+        let process = match cmd.spawn() {
+            Ok(p) => p,
+            Err(e) => {
+                self.port_allocator.release(port).await;
+                return Err(BackendError::InvalidConfig(format!(
+                    "Failed to spawn backend adapter process: {}",
+                    e
+                )));
+            }
+        };
 
         let mut processes = self.processes.write().await;
         processes.insert(
@@ -517,7 +523,7 @@ pub fn create_adapter(
             Ok(Arc::new(ExternalBackendAdapter::new(
                 port,
                 target.token.clone(),
-            )))
+            )?))
         }
     }
 }
@@ -743,14 +749,14 @@ mod tests {
 
     #[test]
     fn test_external_backend_adapter_creation() {
-        let adapter = ExternalBackendAdapter::new(9200, "test_token".to_string());
+        let adapter = ExternalBackendAdapter::new(9200, "test_token".to_string()).unwrap();
         assert_eq!(adapter.port, 9200);
         assert_eq!(adapter.token, "test_token");
     }
 
     #[test]
     fn test_external_backend_adapter_supports_files() {
-        let adapter = ExternalBackendAdapter::new(9200, "token".to_string());
+        let adapter = ExternalBackendAdapter::new(9200, "token".to_string()).unwrap();
         assert!(
             !adapter.supports_files(),
             "ExternalBackendAdapter should not support files"

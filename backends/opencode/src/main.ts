@@ -233,7 +233,7 @@ app.post<{ Body: InboundMessage }>("/send", async (request, reply) => {
     message.source.from.username ??
     message.source.from.id;
 
-  log(`Received message from ${who} in chat ${chatId}: ${message.text.slice(0, 80)}...`);
+  log(`Received message from ${who} in chat ${chatId}: ${message.text.length > 80 ? message.text.slice(0, 80) + "..." : message.text}`);
 
   try {
     const aiResponse = await sendToOpenCode(message);
@@ -259,8 +259,8 @@ async function shutdown(signal: string): Promise<void> {
   log(`Received ${signal}, shutting down...`);
   try {
     await app.close();
-  } catch {
-    /* noop */
+  } catch (err) {
+    log(`Error during shutdown: ${err}`);
   }
   log("Backend adapter stopped");
   process.exit(0);
