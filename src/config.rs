@@ -65,7 +65,7 @@ pub enum BackendProtocol {
 }
 
 /// Backend target configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TargetConfig {
     pub protocol: BackendProtocol,
     /// Inbound URL for Pipelit (POST destination)

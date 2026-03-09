@@ -366,7 +366,6 @@ impl BackendAdapter for ExternalBackendAdapter {
 }
 
 /// Manages lifecycle of external backend adapter subprocesses
-#[allow(dead_code)]
 pub struct ExternalBackendManager {
     backends_dir: String,
     port_allocator: crate::adapter::PortAllocator,
@@ -374,16 +373,15 @@ pub struct ExternalBackendManager {
     processes: tokio::sync::RwLock<HashMap<String, ExternalBackendProcess>>,
 }
 
-#[allow(dead_code)]
 pub struct ExternalBackendProcess {
     pub instance_id: String,
     pub port: u16,
+    #[allow(dead_code)]
     pub token: String,
     pub process: tokio::process::Child,
     pub adapter_dir: String,
 }
 
-#[allow(dead_code)]
 impl ExternalBackendManager {
     pub fn new(backends_dir: String, port_range: (u16, u16), gateway_listen: &str) -> Self {
         let gateway_url = if gateway_listen.starts_with("0.0.0.0") {
@@ -478,6 +476,7 @@ impl ExternalBackendManager {
         Ok((port, backend_token))
     }
 
+    #[allow(dead_code)]
     pub async fn get_port(&self, credential_id: &str) -> Option<u16> {
         let processes = self.processes.read().await;
         processes.get(credential_id).map(|p| p.port)
@@ -494,6 +493,44 @@ impl ExternalBackendManager {
                 port = %process.port,
                 "Stopped external backend adapter"
             );
+        }
+    }
+
+    pub async fn stop_all(&self) {
+        let mut processes = self.processes.write().await;
+        for (credential_id, mut process) in processes.drain() {
+            let _ = process.process.kill().await;
+            let _ = process.process.wait().await;
+            self.port_allocator.release(process.port).await;
+            tracing::info!(
+                credential_id = %credential_id,
+                instance_id = %process.instance_id,
+                port = %process.port,
+                adapter_dir = %process.adapter_dir,
+                "Stopped external backend adapter"
+            );
+        }
+    }
+}
+
+/// Poll an external backend adapter's health endpoint until it responds successfully
+/// or the timeout is exceeded.
+pub async fn wait_for_backend_ready(
+    port: u16,
+    timeout: std::time::Duration,
+    interval: std::time::Duration,
+) -> bool {
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{}/health", port);
+    let start = std::time::Instant::now();
+
+    loop {
+        if start.elapsed() > timeout {
+            return false;
+        }
+        match client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => return true,
+            _ => tokio::time::sleep(interval).await,
         }
     }
 }
