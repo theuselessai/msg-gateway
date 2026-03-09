@@ -2,7 +2,7 @@
 
 ## Overview
 
-msg-gateway is a protocol bridge that connects user-facing communication platforms to backend AI/LLM services. User-facing adapters run as external subprocesses (except the built-in Generic adapter). Backend adapters are built into the gateway. The gateway normalizes messages between both sides.
+msg-gateway is a protocol bridge that connects user-facing communication platforms to backend AI/LLM services. User-facing adapters run as external subprocesses (except the built-in Generic adapter). Backend adapters can be either built-in (Rust implementations) or external (subprocess-managed, any language). The gateway normalizes messages between both sides.
 
 ## System Architecture
 
@@ -359,31 +359,62 @@ External adapters communicate with the gateway via:
 | Pipelit | Webhook + callback | `POST {inbound_url}` with `InboundMessage` | `POST /api/v1/send` from backend |
 | OpenCode | REST + SSE | `POST {base_url}/conversation` | SSE polling for responses |
 
-### Backend Scaling Model
+### Backend Adapter Models
 
-Backends use a **singleton-per-name** model: one subprocess per named backend entry in `config.backends`, shared across all credentials that reference it.
+The gateway supports two backend adapter models:
 
-```
+#### 1. Built-in Backends (Rust)
+
+Built-in backends are Rust struct implementations of the `BackendAdapter` trait, compiled directly into the gateway binary. They run in-process as part of the gateway.
+
+**Available built-in backends:**
+- `BackendProtocol::Pipelit` → `PipelitAdapter` (HTTP client for Pipelit webhooks)
+- `BackendProtocol::Opencode` → `OpencodeAdapter` (HTTP client + SSE for OpenCode)
+
+**Singleton-per-name model:** One adapter instance per named backend entry in `config.backends`, shared across all credentials referencing that backend.
+
+```rust
+// Example: All credentials using "opencode" backend share one OpencodeAdapter instance
 config.backends:
-  opencode  →  ONE Node.js process (port 9200)
-  pipelit   →  ONE Node.js process (port 9201)
+  opencode  →  ONE OpencodeAdapter instance (in-process Rust)
 
 Credentials:
   telegram  (backend: opencode)  ──┐
-  slack     (backend: opencode)  ──┼──▶  opencode process handles all
+  slack     (backend: opencode)  ──┼──▶  single OpencodeAdapter handles all
   discord   (backend: opencode)  ──┘     via internal session map (credential:chat → sessionId)
-
-  webhook1  (backend: pipelit)   ──▶  pipelit process handles all
 ```
 
-**Constraint:** this model only works when all credentials sharing a backend name talk to the **same upstream instance** (same base URL, same auth token). If credentials need to reach different upstream endpoints or isolated accounts, a single shared process cannot serve them all correctly.
+#### 2. External Backends (Subprocess)
 
-**When this breaks down (future work):**
+External backends (`BackendProtocol::External`) run as separate subprocesses, managed by `ExternalBackendManager`. They can be written in any language and communicate via HTTP.
+
+**Singleton-per-name model:** One subprocess per named backend entry in `config.backends`, shared across all credentials referencing that backend.
+
+```
+config.backends:
+  opencode  →  ONE Node.js process (port 9200, backends/opencode/)
+  pipelit   →  ONE Node.js process (port 9201, backends/pipelit/)
+
+Credentials:
+  telegram  (backend: opencode)  ──┐
+  slack     (backend: opencode)  ──┼──▶  opencode subprocess handles all
+  discord   (backend: opencode)  ──┘     via internal routing/session management
+```
+
+**Protocol:** External backends receive env vars (`BACKEND_PORT`, `GATEWAY_URL`, `BACKEND_TOKEN`, `BACKEND_CONFIG`) and expose:
+- `POST /send` — Receive messages from gateway
+- `GET /health` — Health check endpoint
+
+#### Current Limitation
+
+The singleton-per-name model (both built-in and external) only works when all credentials sharing a backend name talk to the **same upstream instance** (same base URL, same auth token). If credentials need to reach different upstream endpoints or isolated accounts, a single shared adapter/process cannot serve them all correctly.
+
+**When this breaks down:**
 - Multi-tenant deployments where each user has their own OpenCode server
 - Per-credential Pipelit workspace tokens pointing to different endpoints
 - Any scenario where backend config differs per credential, not per backend name
 
-**Future direction:** model backends like adapters — one subprocess per credential, with `CREDENTIAL_CONFIG` carrying the per-credential endpoint/token. See roadmap.
+**Future direction:** Per-credential backend isolation — one adapter instance (or subprocess) per credential, with `CREDENTIAL_CONFIG` carrying per-credential endpoint/token (same pattern as external adapters). See roadmap.
 
 ## Security
 

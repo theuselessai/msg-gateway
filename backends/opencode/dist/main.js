@@ -172,6 +172,9 @@ function startEventStream() {
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 log(`SSE parse error: ${msg}`);
+                if (err instanceof Error && err.stack) {
+                    log(err.stack);
+                }
             }
         },
         onDisconnect: () => {
@@ -281,6 +284,9 @@ async function shutdown(signal, eventSource) {
     catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log(`Error during shutdown: ${msg}`);
+        if (err instanceof Error && err.stack) {
+            log(err.stack);
+        }
     }
     log("Backend adapter stopped");
     process.exit(0);
@@ -317,5 +323,8 @@ async function main() {
 main().catch((err) => {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Fatal error: ${msg}`);
+    if (err instanceof Error && err.stack) {
+        log(err.stack);
+    }
     process.exit(1);
 });
