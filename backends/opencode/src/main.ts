@@ -1,9 +1,13 @@
+import { timingSafeEqual } from "crypto";
 import Fastify from "fastify";
 
 const INSTANCE_ID = process.env.INSTANCE_ID ?? "unknown";
 const BACKEND_PORT = parseInt(process.env.BACKEND_PORT ?? "9200", 10);
 const GATEWAY_URL = process.env.GATEWAY_URL ?? "http://localhost:8080";
 const BACKEND_TOKEN = process.env.BACKEND_TOKEN ?? "";
+const GATEWAY_SEND_TOKEN = process.env.GATEWAY_SEND_TOKEN ?? "";
+
+const MAX_SESSIONS = 10_000;
 
 interface BackendConfig {
   base_url: string;
@@ -25,6 +29,14 @@ const backendConfig: BackendConfig = (() => {
 function log(msg: string): void {
   const ts = new Date().toISOString();
   process.stderr.write(`[${ts}] [${INSTANCE_ID}] ${msg}\n`);
+}
+
+function verifyBearer(header: string, token: string): boolean {
+  if (!token) return false;
+  const expectedBuf = Buffer.from(`Bearer ${token}`);
+  const headerBuf = Buffer.from(header);
+  if (headerBuf.length !== expectedBuf.length) return false;
+  return timingSafeEqual(headerBuf, expectedBuf);
 }
 
 interface UserInfo {
@@ -72,7 +84,7 @@ async function retry<T>(
       return await fn();
     } catch (err) {
       lastError = err;
-      if (attempt < retries - 1) {
+      if (attempt < retries - 1 && !shuttingDown) {
         const delay = baseDelay * Math.pow(2, attempt);
         log(`Retry ${attempt + 1}/${retries} after ${delay}ms`);
         await new Promise((r) => setTimeout(r, delay));
@@ -117,8 +129,8 @@ async function getOrCreateSession(
     method: "POST",
     headers: {
       Authorization: basicAuthHeader(),
-      "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!resp.ok) {
@@ -130,6 +142,11 @@ async function getOrCreateSession(
 
   const data = (await resp.json()) as { id: string };
   const sessionId = data.id;
+  // FIFO eviction: Map iterates in insertion order, so first key is earliest inserted
+  if (sessions.size >= MAX_SESSIONS) {
+    const firstInsertedKey = sessions.keys().next().value;
+    if (firstInsertedKey !== undefined) sessions.delete(firstInsertedKey);
+  }
   sessions.set(sessionKey, sessionId);
   log(`Session created: ${sessionId} for ${sessionKey}`);
   return sessionId;
@@ -157,6 +174,7 @@ async function sendToOpenCode(message: InboundMessage): Promise<string> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(msgBody),
+      signal: AbortSignal.timeout(60_000),
     },
   );
 
@@ -201,10 +219,11 @@ async function relayToGateway(
     const resp = await fetch(`${GATEWAY_URL}/api/v1/send`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${BACKEND_TOKEN}`,
+        Authorization: `Bearer ${GATEWAY_SEND_TOKEN}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(relayBody),
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!resp.ok) {
@@ -222,12 +241,17 @@ app.get("/health", async () => {
 
 app.post<{ Body: InboundMessage }>("/send", async (request, reply) => {
   const authHeader = request.headers.authorization;
-  if (!authHeader || authHeader !== `Bearer ${BACKEND_TOKEN}`) {
+  if (!authHeader || !verifyBearer(authHeader, BACKEND_TOKEN)) {
     reply.status(401);
     return { error: "Unauthorized" };
   }
 
   const message = request.body;
+  if (!message?.credential_id || !message?.source?.chat_id || !message?.source?.from || typeof message?.text !== "string") {
+    reply.status(400);
+    return { error: "Invalid message: missing required fields (credential_id, source.chat_id, source.from, text)" };
+  }
+
   const chatId = message.source.chat_id;
   const who =
     message.source.from.display_name ??
@@ -293,6 +317,9 @@ async function main(): Promise<void> {
   }
   if (!backendConfig.model) {
     throw new Error("BACKEND_CONFIG must include 'model' with providerID and modelID");
+  }
+  if (!GATEWAY_SEND_TOKEN) {
+    throw new Error("GATEWAY_SEND_TOKEN environment variable must be set");
   }
 
   await app.listen({

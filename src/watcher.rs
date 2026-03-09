@@ -99,6 +99,9 @@ pub async fn watch_config(
                 // Sync adapter instances with new config
                 sync_adapters(&old_config, &new_config, &manager, &adapter_manager).await;
 
+                // Sync backend instances with new config
+                sync_backends(&old_config, &new_config, &state).await;
+
                 tracing::info!("Config reloaded successfully");
                 last_reload = std::time::Instant::now();
             }
@@ -231,7 +234,82 @@ async fn spawn_adapter(
     }
 }
 
-/// Check if credential config has changed in a way that requires instance restart
+async fn sync_backends(
+    old_config: &config::Config,
+    new_config: &config::Config,
+    state: &Arc<AppState>,
+) {
+    use crate::config::BackendProtocol;
+
+    let old_backends = &old_config.backends;
+    let new_backends = &new_config.backends;
+
+    // Stop removed or changed backends
+    for (name, old_cfg) in old_backends {
+        match new_backends.get(name) {
+            None => {
+                tracing::info!(backend = %name, "Backend removed, stopping");
+                state.backend_manager.stop(name).await;
+            }
+            Some(new_cfg) if old_cfg != new_cfg => {
+                if old_cfg.active && old_cfg.protocol == BackendProtocol::External {
+                    tracing::info!(backend = %name, "Backend config changed, restarting");
+                    state.backend_manager.stop(name).await;
+                }
+                if new_cfg.active && new_cfg.protocol == BackendProtocol::External {
+                    spawn_backend(name, new_cfg, state).await;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Spawn newly added backends
+    for (name, new_cfg) in new_backends {
+        if !old_backends.contains_key(name)
+            && new_cfg.active
+            && new_cfg.protocol == BackendProtocol::External
+        {
+            tracing::info!(backend = %name, "New backend, spawning");
+            spawn_backend(name, new_cfg, state).await;
+        }
+    }
+}
+
+async fn spawn_backend(
+    name: &str,
+    backend_cfg: &crate::config::BackendConfig,
+    state: &Arc<AppState>,
+) {
+    match state.backend_manager.spawn(name, backend_cfg).await {
+        Ok((port, token)) => {
+            tracing::info!(backend = %name, port = %port, "External backend spawned");
+
+            let ready = crate::backend::wait_for_backend_ready(
+                port,
+                std::time::Duration::from_secs(30),
+                std::time::Duration::from_millis(500),
+            )
+            .await;
+
+            if ready {
+                tracing::info!(backend = %name, "Backend is ready");
+            } else {
+                tracing::warn!(backend = %name, "Backend did not become ready within timeout");
+            }
+
+            let mut cfg = state.config.write().await;
+            if let Some(b) = cfg.backends.get_mut(name) {
+                b.port = Some(port);
+                b.token = token;
+            }
+        }
+        Err(e) => {
+            tracing::error!(backend = %name, error = %e, "Failed to spawn external backend");
+        }
+    }
+}
+
 fn credential_changed(old: &CredentialConfig, new: &CredentialConfig) -> bool {
     old.adapter != new.adapter || old.token != new.token || old.config != new.config
 }
@@ -239,9 +317,7 @@ fn credential_changed(old: &CredentialConfig, new: &CredentialConfig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        AuthConfig, BackendProtocol, Config, CredentialConfig, GatewayConfig, TargetConfig,
-    };
+    use crate::config::{AuthConfig, Config, CredentialConfig, GatewayConfig};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -252,7 +328,7 @@ mod tests {
             active,
             emergency: false,
             config: None,
-            target: None,
+            backend: None,
             route: serde_json::json!({"test": true}),
         }
     }
@@ -262,15 +338,7 @@ mod tests {
             gateway: GatewayConfig {
                 listen: "127.0.0.1:8080".to_string(),
                 admin_token: "test-admin-token".to_string(),
-                default_target: TargetConfig {
-                    protocol: BackendProtocol::Pipelit,
-                    inbound_url: Some("http://localhost:9000/inbound".to_string()),
-                    base_url: None,
-                    token: "test-backend-token".to_string(),
-                    poll_interval_ms: None,
-                    adapter_dir: None,
-                    port: None,
-                },
+                default_backend: None,
                 adapters_dir: "./adapters".to_string(),
                 adapter_port_range: (9000, 9100),
                 backends_dir: "./backends".to_string(),
@@ -285,6 +353,7 @@ mod tests {
                 .into_iter()
                 .map(|(k, v)| (k.to_string(), v))
                 .collect(),
+            backends: HashMap::new(),
         }
     }
 

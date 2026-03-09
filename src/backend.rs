@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 
-use crate::config::{BackendProtocol, CredentialConfig, TargetConfig};
+use crate::config::{BackendConfig, BackendProtocol, CredentialConfig, GatewayConfig};
 use crate::message::InboundMessage;
 
 /// Gateway context passed to backend adapters that need to call back into the gateway
@@ -66,7 +66,7 @@ pub struct PipelitAdapter {
 
 impl PipelitAdapter {
     pub fn new(
-        target: &TargetConfig,
+        target: &BackendConfig,
         _gateway_ctx: Option<&GatewayContext>,
         _credential_config: Option<&serde_json::Value>,
     ) -> Result<Self, BackendError> {
@@ -121,7 +121,7 @@ pub struct OpencodeAdapter {
 
 impl OpencodeAdapter {
     pub fn new(
-        target: &TargetConfig,
+        target: &BackendConfig,
         gateway_ctx: Option<&GatewayContext>,
         credential_config: Option<&serde_json::Value>,
     ) -> Result<Self, BackendError> {
@@ -371,6 +371,7 @@ pub struct ExternalBackendManager {
     backends_dir: String,
     port_allocator: crate::adapter::PortAllocator,
     gateway_url: String,
+    gateway_send_token: String,
     processes: tokio::sync::RwLock<HashMap<String, ExternalBackendProcess>>,
 }
 
@@ -385,7 +386,12 @@ pub struct ExternalBackendProcess {
 
 #[allow(dead_code)]
 impl ExternalBackendManager {
-    pub fn new(backends_dir: String, port_range: (u16, u16), gateway_listen: &str) -> Self {
+    pub fn new(
+        backends_dir: String,
+        port_range: (u16, u16),
+        gateway_listen: &str,
+        gateway_send_token: String,
+    ) -> Self {
         let gateway_url = if gateway_listen.starts_with("0.0.0.0") {
             format!(
                 "http://127.0.0.1:{}",
@@ -399,19 +405,19 @@ impl ExternalBackendManager {
             backends_dir,
             port_allocator: crate::adapter::PortAllocator::new(port_range),
             gateway_url,
+            gateway_send_token,
             processes: tokio::sync::RwLock::new(HashMap::new()),
         }
     }
 
     pub async fn spawn(
         &self,
-        credential_id: &str,
-        adapter_dir_override: Option<&str>,
         backend_name: &str,
-        _token: &str,
-        config: Option<&serde_json::Value>,
+        backend_cfg: &BackendConfig,
     ) -> Result<(u16, String), BackendError> {
-        let adapter_dir = adapter_dir_override
+        let adapter_dir = backend_cfg
+            .adapter_dir
+            .as_ref()
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::path::Path::new(&self.backends_dir).join(backend_name));
 
@@ -433,11 +439,12 @@ impl ExternalBackendManager {
             .env("BACKEND_PORT", port.to_string())
             .env("GATEWAY_URL", &self.gateway_url)
             .env("BACKEND_TOKEN", &backend_token)
+            .env("GATEWAY_SEND_TOKEN", &self.gateway_send_token)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
 
-        if let Some(cfg) = config {
+        if let Some(cfg) = &backend_cfg.config {
             cmd.env(
                 "BACKEND_CONFIG",
                 serde_json::to_string(cfg).unwrap_or_default(),
@@ -445,7 +452,6 @@ impl ExternalBackendManager {
         }
 
         tracing::info!(
-            credential_id = %credential_id,
             backend = %backend_name,
             port = %port,
             instance_id = %instance_id,
@@ -465,7 +471,7 @@ impl ExternalBackendManager {
 
         let mut processes = self.processes.write().await;
         processes.insert(
-            credential_id.to_string(),
+            backend_name.to_string(),
             ExternalBackendProcess {
                 instance_id,
                 port,
@@ -478,19 +484,34 @@ impl ExternalBackendManager {
         Ok((port, backend_token))
     }
 
-    pub async fn get_port(&self, credential_id: &str) -> Option<u16> {
+    #[allow(dead_code)]
+    pub async fn get_port(&self, backend_name: &str) -> Option<u16> {
         let processes = self.processes.read().await;
-        processes.get(credential_id).map(|p| p.port)
+        processes.get(backend_name).map(|p| p.port)
     }
 
-    pub async fn stop(&self, credential_id: &str) {
+    pub async fn stop(&self, backend_name: &str) {
         let mut processes = self.processes.write().await;
-        if let Some(mut process) = processes.remove(credential_id) {
+        if let Some(mut process) = processes.remove(backend_name) {
             let _ = process.process.kill().await;
             let _ = process.process.wait().await;
             self.port_allocator.release(process.port).await;
             tracing::info!(
-                credential_id = %credential_id,
+                backend = %backend_name,
+                port = %process.port,
+                "Stopped external backend adapter"
+            );
+        }
+    }
+
+    pub async fn stop_all(&self) {
+        let mut processes = self.processes.write().await;
+        for (name, mut process) in processes.drain() {
+            let _ = process.process.kill().await;
+            let _ = process.process.wait().await;
+            self.port_allocator.release(process.port).await;
+            tracing::info!(
+                backend = %name,
                 port = %process.port,
                 "Stopped external backend adapter"
             );
@@ -499,7 +520,7 @@ impl ExternalBackendManager {
 }
 
 pub fn create_adapter(
-    target: &TargetConfig,
+    target: &BackendConfig,
     gateway_ctx: Option<&GatewayContext>,
     credential_config: Option<&serde_json::Value>,
 ) -> Result<Arc<dyn BackendAdapter>, BackendError> {
@@ -517,7 +538,7 @@ pub fn create_adapter(
         BackendProtocol::External => {
             let port = target.port.ok_or_else(|| {
                 BackendError::InvalidConfig(
-                    "External backend adapter requires 'port' in target config".to_string(),
+                    "External backend adapter requires 'port' in backend config".to_string(),
                 )
             })?;
             Ok(Arc::new(ExternalBackendAdapter::new(
@@ -528,23 +549,52 @@ pub fn create_adapter(
     }
 }
 
-/// Resolve the target configuration for a credential
-/// Returns the credential's target if set, otherwise falls back to default_target
-pub fn resolve_target<'a>(
-    credential: &'a CredentialConfig,
-    default_target: &'a TargetConfig,
-) -> &'a TargetConfig {
-    credential.target.as_ref().unwrap_or(default_target)
+/// Resolve the backend name for a credential.
+/// Returns the credential's explicit backend name, or the gateway's default_backend.
+pub fn resolve_backend_name(
+    credential: &CredentialConfig,
+    gateway: &GatewayConfig,
+) -> Option<String> {
+    credential
+        .backend
+        .clone()
+        .or_else(|| gateway.default_backend.clone())
+}
+
+/// Poll an external backend's health endpoint until it responds 200 or timeout expires.
+pub async fn wait_for_backend_ready(
+    port: u16,
+    timeout: std::time::Duration,
+    interval: std::time::Duration,
+) -> bool {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let url = format!("http://127.0.0.1:{}/health", port);
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    loop {
+        match client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => return true,
+            _ => {}
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(interval).await;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::BackendProtocol;
+    use crate::config::{BackendConfig, BackendProtocol};
     use crate::message::{InboundMessage, MessageSource, UserInfo};
 
-    fn make_opencode_target(token: &str) -> TargetConfig {
-        TargetConfig {
+    fn make_opencode_target(token: &str) -> BackendConfig {
+        BackendConfig {
             protocol: BackendProtocol::Opencode,
             inbound_url: None,
             base_url: Some("http://localhost:4096".to_string()),
@@ -552,6 +602,8 @@ mod tests {
             poll_interval_ms: None,
             adapter_dir: None,
             port: None,
+            active: true,
+            config: None,
         }
     }
 
@@ -579,7 +631,7 @@ mod tests {
 
     #[test]
     fn test_pipelit_adapter_requires_inbound_url() {
-        let target = TargetConfig {
+        let target = BackendConfig {
             protocol: BackendProtocol::Pipelit,
             inbound_url: None,
             base_url: None,
@@ -587,6 +639,8 @@ mod tests {
             poll_interval_ms: None,
             adapter_dir: None,
             port: None,
+            active: true,
+            config: None,
         };
 
         let result = PipelitAdapter::new(&target, None, None);
@@ -595,7 +649,7 @@ mod tests {
 
     #[test]
     fn test_pipelit_adapter_creation() {
-        let target = TargetConfig {
+        let target = BackendConfig {
             protocol: BackendProtocol::Pipelit,
             inbound_url: Some("http://localhost:8000/inbound".to_string()),
             base_url: None,
@@ -603,6 +657,8 @@ mod tests {
             poll_interval_ms: None,
             adapter_dir: None,
             port: None,
+            active: true,
+            config: None,
         };
 
         let adapter = PipelitAdapter::new(&target, None, None).unwrap();
@@ -611,7 +667,7 @@ mod tests {
 
     #[test]
     fn test_opencode_adapter_requires_base_url() {
-        let target = TargetConfig {
+        let target = BackendConfig {
             protocol: BackendProtocol::Opencode,
             inbound_url: None,
             base_url: None,
@@ -619,6 +675,8 @@ mod tests {
             poll_interval_ms: None,
             adapter_dir: None,
             port: None,
+            active: true,
+            config: None,
         };
 
         let result = OpencodeAdapter::new(&target, None, None);
@@ -627,7 +685,7 @@ mod tests {
 
     #[test]
     fn test_opencode_adapter_creation() {
-        let target = TargetConfig {
+        let target = BackendConfig {
             protocol: BackendProtocol::Opencode,
             inbound_url: None,
             base_url: Some("http://localhost:4096".to_string()),
@@ -635,6 +693,8 @@ mod tests {
             poll_interval_ms: Some(1000),
             adapter_dir: None,
             port: None,
+            active: true,
+            config: None,
         };
 
         let adapter = OpencodeAdapter::new(&target, None, None).unwrap();
@@ -765,7 +825,7 @@ mod tests {
 
     #[test]
     fn test_create_adapter_external_requires_port() {
-        let target = TargetConfig {
+        let target = BackendConfig {
             protocol: BackendProtocol::External,
             inbound_url: None,
             base_url: None,
@@ -773,6 +833,8 @@ mod tests {
             poll_interval_ms: None,
             adapter_dir: Some("./backends/opencode".to_string()),
             port: None,
+            active: true,
+            config: None,
         };
 
         let result = create_adapter(&target, None, None);
@@ -789,7 +851,7 @@ mod tests {
 
     #[test]
     fn test_create_adapter_external_with_port() {
-        let target = TargetConfig {
+        let target = BackendConfig {
             protocol: BackendProtocol::External,
             inbound_url: None,
             base_url: None,
@@ -797,6 +859,8 @@ mod tests {
             poll_interval_ms: None,
             adapter_dir: Some("./backends/opencode".to_string()),
             port: Some(9200),
+            active: true,
+            config: None,
         };
 
         let result = create_adapter(&target, None, None);

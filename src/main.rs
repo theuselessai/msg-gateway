@@ -16,6 +16,8 @@ use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::adapter::AdapterInstanceManager;
+use crate::backend::ExternalBackendManager;
+use crate::config::BackendProtocol;
 use crate::manager::CredentialManager;
 
 #[tokio::main]
@@ -49,14 +51,28 @@ async fn main() -> anyhow::Result<()> {
         "Adapter manager initialized"
     );
 
+    // Create backend manager for external backend adapters
+    let backend_manager = Arc::new(ExternalBackendManager::new(
+        config.gateway.backends_dir.clone(),
+        config.gateway.backend_port_range,
+        &config.gateway.listen,
+        config.auth.send_token.clone(),
+    ));
+
     // Create credential manager
     let manager = Arc::new(CredentialManager::new());
 
-    // Start HTTP server (before spawning adapters, so they can connect)
+    // Start HTTP server (before spawning adapters/backends, so they can connect)
     let manager_clone = manager.clone();
     let adapter_manager_clone = adapter_manager.clone();
-    let (state, server_future) =
-        server::create_server(config.clone(), manager_clone, adapter_manager_clone).await?;
+    let backend_manager_clone = backend_manager.clone();
+    let (state, server_future) = server::create_server(
+        config.clone(),
+        manager_clone,
+        adapter_manager_clone,
+        backend_manager_clone,
+    )
+    .await?;
 
     // Start adapter instances for all active credentials
     for (credential_id, cred_config) in &config.credentials {
@@ -121,6 +137,48 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Spawn all active External backends
+    for (name, backend_cfg) in &config.backends {
+        if backend_cfg.active && backend_cfg.protocol == BackendProtocol::External {
+            match backend_manager.spawn(name, backend_cfg).await {
+                Ok((port, token)) => {
+                    tracing::info!(
+                        backend = %name,
+                        port = %port,
+                        "External backend spawned"
+                    );
+
+                    let ready = backend::wait_for_backend_ready(
+                        port,
+                        Duration::from_secs(30),
+                        Duration::from_millis(500),
+                    )
+                    .await;
+
+                    if ready {
+                        tracing::info!(backend = %name, "Backend is ready");
+                    } else {
+                        tracing::warn!(backend = %name, "Backend did not become ready within timeout");
+                    }
+
+                    // Write back runtime port + token
+                    let mut cfg = state.config.write().await;
+                    if let Some(b) = cfg.backends.get_mut(name) {
+                        b.port = Some(port);
+                        b.token = token;
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        backend = %name,
+                        error = %e,
+                        "Failed to spawn external backend"
+                    );
+                }
+            }
+        }
+    }
+
     // Start adapter health monitor in background (check every 30s, max 3 failures)
     {
         let adapter_manager_for_health = adapter_manager.clone();
@@ -170,6 +228,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Graceful shutdown
     tracing::info!("Shutting down...");
+    backend_manager.stop_all().await;
     adapter_manager.stop_all().await;
     manager.shutdown().await;
 

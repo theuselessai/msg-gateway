@@ -106,16 +106,21 @@ pub async fn chat_inbound(
 
     let route = credential.route.clone();
 
-    // Resolve target for this credential
-    let target = crate::backend::resolve_target(credential, &config.gateway.default_target);
+    let backend_name = crate::backend::resolve_backend_name(credential, &config.gateway)
+        .ok_or_else(|| {
+            AppError::Internal("No backend configured for this credential".to_string())
+        })?;
+    let backend_cfg = config.backends.get(&backend_name).ok_or_else(|| {
+        AppError::Internal(format!("Backend '{}' not found in config", backend_name))
+    })?;
     let gateway_ctx = crate::backend::GatewayContext {
         gateway_url: format!("http://{}", config.gateway.listen),
         send_token: config.auth.send_token.clone(),
     };
     let adapter = match crate::backend::create_adapter(
-        target,
+        backend_cfg,
         Some(&gateway_ctx),
-        credential.config.as_ref(),
+        credential.config.as_ref().or(backend_cfg.config.as_ref()),
     ) {
         Ok(a) => a,
         Err(e) => {

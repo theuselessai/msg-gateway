@@ -14,6 +14,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::adapter::AdapterInstanceManager;
 use crate::admin;
+use crate::backend::ExternalBackendManager;
 use crate::config::Config;
 use crate::error::AppError;
 use crate::files::FileCache;
@@ -27,11 +28,9 @@ pub struct AppState {
     pub ws_registry: WsRegistry,
     pub manager: Arc<CredentialManager>,
     pub adapter_manager: Arc<AdapterInstanceManager>,
-    /// Timestamp until which config reload should be skipped (Admin API writes)
+    pub backend_manager: Arc<ExternalBackendManager>,
     pub skip_reload_until: RwLock<Option<std::time::Instant>>,
-    /// Health monitor for emergency mode
     pub health_monitor: HealthMonitor,
-    /// File cache (optional, None if file_cache not configured)
     pub file_cache: Option<Arc<FileCache>>,
 }
 
@@ -43,6 +42,7 @@ pub async fn create_server(
     config: Config,
     manager: Arc<CredentialManager>,
     adapter_manager: Arc<AdapterInstanceManager>,
+    backend_manager: Arc<ExternalBackendManager>,
 ) -> anyhow::Result<(
     Arc<AppState>,
     Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>,
@@ -77,6 +77,7 @@ pub async fn create_server(
         ws_registry: generic::new_ws_registry(),
         manager,
         adapter_manager,
+        backend_manager,
         skip_reload_until: RwLock::new(None),
         health_monitor: HealthMonitor::new(max_buffer_size),
         file_cache,
@@ -528,15 +529,23 @@ async fn adapter_inbound(
     let route = credential.route.clone();
     let adapter = credential.adapter.clone();
 
-    // Resolve target for this credential
-    let target = crate::backend::resolve_target(credential, &config.gateway.default_target);
+    let backend_name = crate::backend::resolve_backend_name(credential, &config.gateway)
+        .ok_or_else(|| {
+            AppError::Internal("No backend configured for this credential".to_string())
+        })?;
+    let backend_cfg = config.backends.get(&backend_name).ok_or_else(|| {
+        AppError::Internal(format!("Backend '{}' not found in config", backend_name))
+    })?;
     let gateway_ctx = crate::backend::GatewayContext {
         gateway_url: format!("http://{}", config.gateway.listen),
         send_token: config.auth.send_token.clone(),
     };
-    let backend_adapter =
-        crate::backend::create_adapter(target, Some(&gateway_ctx), credential.config.as_ref())
-            .map_err(|e| AppError::Internal(format!("Failed to create backend adapter: {}", e)))?;
+    let backend_adapter = crate::backend::create_adapter(
+        backend_cfg,
+        Some(&gateway_ctx),
+        credential.config.as_ref().or(backend_cfg.config.as_ref()),
+    )
+    .map_err(|e| AppError::Internal(format!("Failed to create backend adapter: {}", e)))?;
     drop(config);
 
     // Build normalized inbound message

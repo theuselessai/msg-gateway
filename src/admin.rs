@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
-use crate::config::{CredentialConfig, TargetConfig};
+use crate::config::CredentialConfig;
 use crate::error::AppError;
 use crate::server::AppState;
 
@@ -27,12 +27,10 @@ pub struct CreateCredentialRequest {
     pub active: bool,
     #[serde(default)]
     pub emergency: bool,
-    /// Adapter-specific configuration
     #[serde(default)]
     pub config: Option<serde_json::Value>,
-    /// Per-credential backend target override
     #[serde(default)]
-    pub target: Option<TargetConfig>,
+    pub backend: Option<String>,
     pub route: serde_json::Value,
 }
 
@@ -51,12 +49,10 @@ pub struct UpdateCredentialRequest {
     pub active: Option<bool>,
     #[serde(default)]
     pub emergency: Option<bool>,
-    /// Adapter-specific configuration
     #[serde(default)]
     pub config: Option<serde_json::Value>,
-    /// Per-credential backend target override
     #[serde(default)]
-    pub target: Option<TargetConfig>,
+    pub backend: Option<String>,
     #[serde(default)]
     pub route: Option<serde_json::Value>,
 }
@@ -69,6 +65,7 @@ pub struct CredentialResponse {
     pub active: bool,
     pub emergency: bool,
     pub config: Option<serde_json::Value>,
+    pub backend: Option<String>,
     pub route: serde_json::Value,
     pub instance_status: Option<String>,
 }
@@ -93,6 +90,7 @@ pub async fn get_credential(
         active: cred.active,
         emergency: cred.emergency,
         config: cred.config.clone(),
+        backend: cred.backend.clone(),
         route: cred.route.clone(),
         instance_status: instance_status.map(|s| format!("{:?}", s)),
     }))
@@ -123,7 +121,7 @@ pub async fn create_credential(
         active: req.active,
         emergency: req.emergency,
         config: req.config,
-        target: req.target,
+        backend: req.backend,
         route: req.route,
     };
 
@@ -193,8 +191,8 @@ pub async fn update_credential(
         if req.config.is_some() {
             cred.config = req.config;
         }
-        if req.target.is_some() {
-            cred.target = req.target;
+        if req.backend.is_some() {
+            cred.backend = req.backend;
         }
         if let Some(route) = req.route {
             cred.route = route;
@@ -380,8 +378,6 @@ async fn write_config(state: &AppState) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{BackendProtocol, TargetConfig};
-
     // ==================== Request/Response Struct Tests ====================
 
     #[test]
@@ -400,7 +396,7 @@ mod tests {
         assert!(req.active); // default is true
         assert!(!req.emergency); // default is false
         assert!(req.config.is_none());
-        assert!(req.target.is_none());
+        assert!(req.backend.is_none());
     }
 
     #[test]
@@ -412,11 +408,7 @@ mod tests {
             "active": false,
             "emergency": true,
             "config": {"chat_id": "123"},
-            "target": {
-                "protocol": "pipelit",
-                "inbound_url": "http://localhost:8000/inbound",
-                "token": "backend_token"
-            },
+            "backend": "pipelit",
             "route": {"type": "custom", "path": "/api"}
         }"#;
 
@@ -425,7 +417,7 @@ mod tests {
         assert!(!req.active);
         assert!(req.emergency);
         assert!(req.config.is_some());
-        assert!(req.target.is_some());
+        assert_eq!(req.backend, Some("pipelit".to_string()));
     }
 
     #[test]
@@ -438,7 +430,7 @@ mod tests {
         assert!(req.active.is_none());
         assert!(req.emergency.is_none());
         assert!(req.config.is_none());
-        assert!(req.target.is_none());
+        assert!(req.backend.is_none());
         assert!(req.route.is_none());
     }
 
@@ -464,11 +456,7 @@ mod tests {
             "active": false,
             "emergency": true,
             "config": {"setting": "value"},
-            "target": {
-                "protocol": "opencode",
-                "base_url": "http://localhost:9000",
-                "token": "backend_token"
-            },
+            "backend": "opencode",
             "route": {"new": "route"}
         }"#;
 
@@ -478,7 +466,7 @@ mod tests {
         assert_eq!(req.active, Some(false));
         assert_eq!(req.emergency, Some(true));
         assert!(req.config.is_some());
-        assert!(req.target.is_some());
+        assert_eq!(req.backend, Some("opencode".to_string()));
         assert!(req.route.is_some());
     }
 
@@ -490,6 +478,7 @@ mod tests {
             active: true,
             emergency: false,
             config: Some(serde_json::json!({"key": "value"})),
+            backend: None,
             route: serde_json::json!({"type": "default"}),
             instance_status: Some("Running".to_string()),
         };
@@ -510,6 +499,7 @@ mod tests {
             active: false,
             emergency: true,
             config: None,
+            backend: None,
             route: serde_json::json!(null),
             instance_status: None,
         };
@@ -536,7 +526,7 @@ mod tests {
             active: true,
             emergency: false,
             config: None,
-            target: None,
+            backend: None,
             route: serde_json::json!({}),
         };
 
@@ -553,7 +543,7 @@ mod tests {
             active: Some(true),
             emergency: None,
             config: None,
-            target: None,
+            backend: None,
             route: None,
         };
 
@@ -570,6 +560,7 @@ mod tests {
             active: true,
             emergency: false,
             config: None,
+            backend: None,
             route: serde_json::json!({}),
             instance_status: None,
         };
@@ -579,49 +570,33 @@ mod tests {
         assert!(debug_str.contains("cred1"));
     }
 
-    // ==================== Target Config in Requests ====================
+    // ==================== Backend Name in Requests ====================
 
     #[test]
-    fn test_create_request_with_pipelit_target() {
+    fn test_create_request_with_backend_name() {
         let json = r#"{
             "id": "test",
             "adapter": "telegram",
             "token": "tok",
             "route": {},
-            "target": {
-                "protocol": "pipelit",
-                "inbound_url": "http://localhost:8000/inbound",
-                "token": "backend_token"
-            }
+            "backend": "pipelit"
         }"#;
 
         let req: CreateCredentialRequest = serde_json::from_str(json).unwrap();
-        let target = req.target.unwrap();
-        assert!(matches!(target.protocol, BackendProtocol::Pipelit));
-        assert_eq!(
-            target.inbound_url,
-            Some("http://localhost:8000/inbound".to_string())
-        );
+        assert_eq!(req.backend, Some("pipelit".to_string()));
     }
 
     #[test]
-    fn test_create_request_with_opencode_target() {
+    fn test_create_request_without_backend() {
         let json = r#"{
             "id": "test",
             "adapter": "generic",
             "token": "tok",
-            "route": {},
-            "target": {
-                "protocol": "opencode",
-                "base_url": "http://localhost:9000",
-                "token": "backend_token"
-            }
+            "route": {}
         }"#;
 
         let req: CreateCredentialRequest = serde_json::from_str(json).unwrap();
-        let target = req.target.unwrap();
-        assert!(matches!(target.protocol, BackendProtocol::Opencode));
-        assert_eq!(target.base_url, Some("http://localhost:9000".to_string()));
+        assert!(req.backend.is_none());
     }
 
     // ==================== Helper Function Tests ====================
@@ -662,26 +637,17 @@ mod tests {
             active: true,
             emergency: true,
             config: Some(serde_json::json!({"key": "value"})),
-            target: Some(TargetConfig {
-                protocol: BackendProtocol::Pipelit,
-                inbound_url: Some("http://localhost/in".to_string()),
-                base_url: None,
-                token: "backend_token".to_string(),
-                poll_interval_ms: None,
-                adapter_dir: None,
-                port: None,
-            }),
+            backend: Some("pipelit".to_string()),
             route: serde_json::json!({"route": "data"}),
         };
 
-        // Convert to CredentialConfig (as done in create_credential)
         let cred_config = CredentialConfig {
             adapter: req.adapter.clone(),
             token: req.token.clone(),
             active: req.active,
             emergency: req.emergency,
             config: req.config.clone(),
-            target: req.target.clone(),
+            backend: req.backend.clone(),
             route: req.route.clone(),
         };
 
@@ -690,30 +656,28 @@ mod tests {
         assert!(cred_config.active);
         assert!(cred_config.emergency);
         assert!(cred_config.config.is_some());
-        assert!(cred_config.target.is_some());
+        assert_eq!(cred_config.backend, Some("pipelit".to_string()));
     }
 
     #[test]
     fn test_update_applies_partial_changes() {
-        // Start with a credential config
         let mut cred = CredentialConfig {
             adapter: "telegram".to_string(),
             token: "old_token".to_string(),
             active: true,
             emergency: false,
             config: None,
-            target: None,
+            backend: None,
             route: serde_json::json!({"old": "route"}),
         };
 
-        // Partial update
         let update = UpdateCredentialRequest {
             adapter: None,
             token: Some("new_token".to_string()),
             active: Some(false),
             emergency: None,
             config: None,
-            target: None,
+            backend: None,
             route: None,
         };
 

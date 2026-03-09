@@ -287,7 +287,7 @@ fn credential_changed(old: &CredentialConfig, new: &CredentialConfig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AuthConfig, BackendProtocol, GatewayConfig, TargetConfig};
+    use crate::config::{AuthConfig, GatewayConfig};
 
     fn make_credential(adapter: &str, token: &str, active: bool) -> CredentialConfig {
         CredentialConfig {
@@ -296,7 +296,7 @@ mod tests {
             active,
             emergency: false,
             config: None,
-            target: None,
+            backend: None,
             route: serde_json::json!({"test": true}),
         }
     }
@@ -306,15 +306,7 @@ mod tests {
             gateway: GatewayConfig {
                 listen: "127.0.0.1:8080".to_string(),
                 admin_token: "test-admin-token".to_string(),
-                default_target: TargetConfig {
-                    protocol: BackendProtocol::Pipelit,
-                    inbound_url: Some("http://localhost:9000/inbound".to_string()),
-                    base_url: None,
-                    token: "test-backend-token".to_string(),
-                    poll_interval_ms: None,
-                    adapter_dir: None,
-                    port: None,
-                },
+                default_backend: None,
                 adapters_dir: "./adapters".to_string(),
                 adapter_port_range: (9000, 9100),
                 backends_dir: "./backends".to_string(),
@@ -329,6 +321,7 @@ mod tests {
                 .into_iter()
                 .map(|(k, v)| (k.to_string(), v))
                 .collect(),
+            backends: HashMap::new(),
         }
     }
 
