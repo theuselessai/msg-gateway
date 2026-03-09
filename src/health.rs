@@ -356,7 +356,11 @@ async fn drain_buffered_messages(state: &AppState, messages: Vec<InboundMessage>
                     continue;
                 }
             };
-            match create_adapter(backend_cfg, Some(&gateway_ctx), credential.config.as_ref().or(backend_cfg.config.as_ref())) {
+            match create_adapter(
+                backend_cfg,
+                Some(&gateway_ctx),
+                credential.config.as_ref().or(backend_cfg.config.as_ref()),
+            ) {
                 Ok(a) => a,
                 Err(e) => {
                     tracing::error!(
