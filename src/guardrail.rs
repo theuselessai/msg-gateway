@@ -1,12 +1,13 @@
 #![allow(dead_code)]
 
 use cel_interpreter::objects::Map;
-use cel_interpreter::Value;
+use cel_interpreter::{Context, Program, Value};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::config::GuardrailRule;
+use crate::config::{GuardrailAction, GuardrailDirection, GuardrailOnError, GuardrailRule};
+use crate::message::InboundMessage;
 
 pub fn load_rules_from_dir(dir: &Path) -> Vec<GuardrailRule> {
     if !dir.exists() {
@@ -91,6 +92,119 @@ pub fn json_to_cel_value(value: serde_json::Value) -> Value {
             }
             Value::Map(Map::from(map))
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuardrailVerdict {
+    Allow,
+    Block {
+        rule_name: String,
+        reject_message: String,
+    },
+}
+
+pub struct CompiledRule {
+    pub name: String,
+    pub program: Arc<Program>,
+    pub action: GuardrailAction,
+    pub direction: GuardrailDirection,
+    pub on_error: GuardrailOnError,
+    pub reject_message: Option<String>,
+}
+
+pub struct GuardrailEngine {
+    rules: Vec<CompiledRule>,
+}
+
+impl GuardrailEngine {
+    pub fn from_rules(rules: Vec<GuardrailRule>) -> Self {
+        let mut compiled = Vec::new();
+        for rule in rules {
+            match Program::compile(&rule.expression) {
+                Ok(program) => {
+                    compiled.push(CompiledRule {
+                        name: rule.name,
+                        program: Arc::new(program),
+                        action: rule.action,
+                        direction: rule.direction,
+                        on_error: rule.on_error,
+                        reject_message: rule.reject_message,
+                    });
+                }
+                Err(e) => {
+                    tracing::error!(
+                        rule_name = %rule.name,
+                        expression = %rule.expression,
+                        error = %e,
+                        "Failed to compile guardrail CEL expression, skipping rule"
+                    );
+                }
+            }
+        }
+        GuardrailEngine { rules: compiled }
+    }
+
+    pub fn evaluate_inbound(&self, message: &InboundMessage) -> GuardrailVerdict {
+        let json_val = serde_json::to_value(message).unwrap();
+        let cel_val = json_to_cel_value(json_val);
+
+        let mut ctx = Context::default();
+        ctx.add_variable_from_value("message", cel_val);
+
+        for rule in &self.rules {
+            if rule.direction == GuardrailDirection::Outbound {
+                continue;
+            }
+
+            match rule.program.execute(&ctx) {
+                Ok(Value::Bool(true)) => match rule.action {
+                    GuardrailAction::Block => {
+                        let reject_msg = rule
+                            .reject_message
+                            .clone()
+                            .unwrap_or_else(|| rule.name.clone());
+                        return GuardrailVerdict::Block {
+                            rule_name: rule.name.clone(),
+                            reject_message: reject_msg,
+                        };
+                    }
+                    GuardrailAction::Log => {
+                        tracing::warn!(
+                            rule_name = %rule.name,
+                            "Guardrail rule matched (log only)"
+                        );
+                    }
+                },
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!(
+                        rule_name = %rule.name,
+                        error = %e,
+                        "Guardrail rule evaluation error"
+                    );
+                    match rule.on_error {
+                        GuardrailOnError::Block => {
+                            let reject_msg = rule
+                                .reject_message
+                                .clone()
+                                .unwrap_or_else(|| rule.name.clone());
+                            return GuardrailVerdict::Block {
+                                rule_name: rule.name.clone(),
+                                reject_message: reject_msg,
+                            };
+                        }
+                        GuardrailOnError::Allow => {}
+                    }
+                }
+            }
+        }
+
+        GuardrailVerdict::Allow
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
     }
 }
 
@@ -372,5 +486,293 @@ mod tests {
 
         let attachments = get_map_value(&result, "attachments").expect("attachments missing");
         assert!(matches!(attachments, Value::List(l) if l.is_empty()));
+    }
+
+    use crate::config::{GuardrailAction, GuardrailDirection, GuardrailOnError, GuardrailType};
+    use crate::message::{InboundMessage, MessageSource, UserInfo};
+    use chrono::Utc;
+
+    fn make_rule(
+        name: &str,
+        expression: &str,
+        action: GuardrailAction,
+        direction: GuardrailDirection,
+        on_error: GuardrailOnError,
+        reject_message: Option<&str>,
+    ) -> GuardrailRule {
+        GuardrailRule {
+            name: name.to_string(),
+            r#type: GuardrailType::Cel,
+            expression: expression.to_string(),
+            action,
+            direction,
+            on_error,
+            reject_message: reject_message.map(|s| s.to_string()),
+            enabled: true,
+        }
+    }
+
+    fn test_message(text: &str) -> InboundMessage {
+        InboundMessage {
+            route: json!({"channel": "test"}),
+            credential_id: "test_cred".to_string(),
+            source: MessageSource {
+                protocol: "test".to_string(),
+                chat_id: "chat_1".to_string(),
+                message_id: "msg_1".to_string(),
+                reply_to_message_id: None,
+                from: UserInfo {
+                    id: "user_1".to_string(),
+                    username: Some("testuser".to_string()),
+                    display_name: None,
+                },
+            },
+            text: text.to_string(),
+            attachments: vec![],
+            timestamp: Utc::now(),
+            extra_data: None,
+        }
+    }
+
+    #[test]
+    fn test_engine_true_block_returns_block() {
+        let rules = vec![make_rule(
+            "block_all",
+            "true",
+            GuardrailAction::Block,
+            GuardrailDirection::Inbound,
+            GuardrailOnError::Allow,
+            None,
+        )];
+        let engine = GuardrailEngine::from_rules(rules);
+        let msg = test_message("hello");
+        let verdict = engine.evaluate_inbound(&msg);
+        assert_eq!(
+            verdict,
+            GuardrailVerdict::Block {
+                rule_name: "block_all".to_string(),
+                reject_message: "block_all".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_engine_false_block_returns_allow() {
+        let rules = vec![make_rule(
+            "never_fire",
+            "false",
+            GuardrailAction::Block,
+            GuardrailDirection::Inbound,
+            GuardrailOnError::Allow,
+            None,
+        )];
+        let engine = GuardrailEngine::from_rules(rules);
+        let msg = test_message("hello");
+        assert_eq!(engine.evaluate_inbound(&msg), GuardrailVerdict::Allow);
+    }
+
+    #[test]
+    fn test_engine_true_log_returns_allow() {
+        let rules = vec![make_rule(
+            "log_all",
+            "true",
+            GuardrailAction::Log,
+            GuardrailDirection::Inbound,
+            GuardrailOnError::Allow,
+            None,
+        )];
+        let engine = GuardrailEngine::from_rules(rules);
+        let msg = test_message("hello");
+        assert_eq!(engine.evaluate_inbound(&msg), GuardrailVerdict::Allow);
+    }
+
+    #[test]
+    fn test_engine_short_circuits_on_first_block() {
+        let rules = vec![
+            make_rule(
+                "first",
+                "true",
+                GuardrailAction::Block,
+                GuardrailDirection::Inbound,
+                GuardrailOnError::Allow,
+                None,
+            ),
+            make_rule(
+                "second",
+                "true",
+                GuardrailAction::Block,
+                GuardrailDirection::Inbound,
+                GuardrailOnError::Allow,
+                None,
+            ),
+        ];
+        let engine = GuardrailEngine::from_rules(rules);
+        let msg = test_message("hello");
+        let verdict = engine.evaluate_inbound(&msg);
+        assert_eq!(
+            verdict,
+            GuardrailVerdict::Block {
+                rule_name: "first".to_string(),
+                reject_message: "first".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_engine_invalid_expression_skipped() {
+        let rules = vec![
+            make_rule(
+                "bad_rule",
+                "this is not valid CEL !!!",
+                GuardrailAction::Block,
+                GuardrailDirection::Inbound,
+                GuardrailOnError::Allow,
+                None,
+            ),
+            make_rule(
+                "good_rule",
+                "true",
+                GuardrailAction::Block,
+                GuardrailDirection::Inbound,
+                GuardrailOnError::Allow,
+                None,
+            ),
+        ];
+        let engine = GuardrailEngine::from_rules(rules);
+        assert_eq!(engine.rules.len(), 1);
+        let msg = test_message("hello");
+        let verdict = engine.evaluate_inbound(&msg);
+        assert_eq!(
+            verdict,
+            GuardrailVerdict::Block {
+                rule_name: "good_rule".to_string(),
+                reject_message: "good_rule".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_engine_on_error_allow() {
+        let rules = vec![make_rule(
+            "error_rule",
+            "message.nonexistent_field == true",
+            GuardrailAction::Block,
+            GuardrailDirection::Inbound,
+            GuardrailOnError::Allow,
+            None,
+        )];
+        let engine = GuardrailEngine::from_rules(rules);
+        let msg = test_message("hello");
+        assert_eq!(engine.evaluate_inbound(&msg), GuardrailVerdict::Allow);
+    }
+
+    #[test]
+    fn test_engine_on_error_block() {
+        let rules = vec![make_rule(
+            "error_rule",
+            "message.nonexistent_field == true",
+            GuardrailAction::Block,
+            GuardrailDirection::Inbound,
+            GuardrailOnError::Block,
+            None,
+        )];
+        let engine = GuardrailEngine::from_rules(rules);
+        let msg = test_message("hello");
+        assert_eq!(
+            engine.evaluate_inbound(&msg),
+            GuardrailVerdict::Block {
+                rule_name: "error_rule".to_string(),
+                reject_message: "error_rule".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_engine_message_text_matches_password_block() {
+        let rules = vec![make_rule(
+            "no_passwords",
+            r#"message.text.matches("password")"#,
+            GuardrailAction::Block,
+            GuardrailDirection::Inbound,
+            GuardrailOnError::Allow,
+            Some("Message contains sensitive content"),
+        )];
+        let engine = GuardrailEngine::from_rules(rules);
+        let msg = test_message("my password is secret");
+        let verdict = engine.evaluate_inbound(&msg);
+        assert_eq!(
+            verdict,
+            GuardrailVerdict::Block {
+                rule_name: "no_passwords".to_string(),
+                reject_message: "Message contains sensitive content".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_engine_message_text_matches_password_allow() {
+        let rules = vec![make_rule(
+            "no_passwords",
+            r#"message.text.matches("password")"#,
+            GuardrailAction::Block,
+            GuardrailDirection::Inbound,
+            GuardrailOnError::Allow,
+            None,
+        )];
+        let engine = GuardrailEngine::from_rules(rules);
+        let msg = test_message("hello world");
+        assert_eq!(engine.evaluate_inbound(&msg), GuardrailVerdict::Allow);
+    }
+
+    #[test]
+    fn test_engine_is_empty() {
+        let empty = GuardrailEngine::from_rules(vec![]);
+        assert!(empty.is_empty());
+
+        let non_empty = GuardrailEngine::from_rules(vec![make_rule(
+            "rule",
+            "true",
+            GuardrailAction::Block,
+            GuardrailDirection::Inbound,
+            GuardrailOnError::Allow,
+            None,
+        )]);
+        assert!(!non_empty.is_empty());
+    }
+
+    #[test]
+    fn test_engine_outbound_rule_skipped_for_inbound() {
+        let rules = vec![make_rule(
+            "outbound_only",
+            "true",
+            GuardrailAction::Block,
+            GuardrailDirection::Outbound,
+            GuardrailOnError::Allow,
+            None,
+        )];
+        let engine = GuardrailEngine::from_rules(rules);
+        let msg = test_message("hello");
+        assert_eq!(engine.evaluate_inbound(&msg), GuardrailVerdict::Allow);
+    }
+
+    #[test]
+    fn test_engine_both_direction_applies_to_inbound() {
+        let rules = vec![make_rule(
+            "both_dir",
+            "true",
+            GuardrailAction::Block,
+            GuardrailDirection::Both,
+            GuardrailOnError::Allow,
+            None,
+        )];
+        let engine = GuardrailEngine::from_rules(rules);
+        let msg = test_message("hello");
+        assert_eq!(
+            engine.evaluate_inbound(&msg),
+            GuardrailVerdict::Block {
+                rule_name: "both_dir".to_string(),
+                reject_message: "both_dir".to_string(),
+            }
+        );
     }
 }
