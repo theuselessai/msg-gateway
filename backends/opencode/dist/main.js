@@ -160,7 +160,7 @@ function handleEvent(event) {
 }
 function startEventStream() {
     const es = (0, eventsource_client_1.createEventSource)({
-        url: `${backendConfig.base_url}/event`,
+        url: `${backendConfig.base_url}/global/event`,
         headers: { Authorization: basicAuthHeader() },
         onMessage: ({ data }) => {
             if (!data)
@@ -169,7 +169,9 @@ function startEventStream() {
                 const globalEvent = JSON.parse(data);
                 handleEvent(globalEvent.payload);
             }
-            catch { /* ignore parse errors */ }
+            catch (err) {
+                log(`SSE parse error: ${err}`);
+            }
         },
         onDisconnect: () => {
             if (!shuttingDown) {

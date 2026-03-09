@@ -215,14 +215,16 @@ function handleEvent(event: { type: string; properties: Record<string, unknown> 
 
 function startEventStream(): ReturnType<typeof createEventSource> {
   const es = createEventSource({
-    url: `${backendConfig.base_url}/event`,
+    url: `${backendConfig.base_url}/global/event`,
     headers: { Authorization: basicAuthHeader() },
     onMessage: ({ data }) => {
       if (!data) return;
       try {
         const globalEvent = JSON.parse(data) as { payload: { type: string; properties: Record<string, unknown> } };
         handleEvent(globalEvent.payload);
-      } catch { /* ignore parse errors */ }
+      } catch (err) {
+        log(`SSE parse error: ${err}`);
+      }
     },
     onDisconnect: () => {
       if (!shuttingDown) {
