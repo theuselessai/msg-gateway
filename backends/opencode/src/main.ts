@@ -238,6 +238,11 @@ app.post<{ Body: InboundMessage }>("/send", async (request, reply) => {
   try {
     const aiResponse = await sendToOpenCode(message);
 
+    if (!aiResponse || aiResponse.trim().length === 0) {
+      log(`OpenCode returned empty response for chat ${chatId}, skipping relay`);
+      return { status: "ok" };
+    }
+
     log(`Relaying OpenCode response to gateway for chat ${chatId}`);
     await relayToGateway(message.credential_id, chatId, aiResponse);
 
@@ -275,6 +280,9 @@ async function main(): Promise<void> {
   log(`  Gateway: ${GATEWAY_URL}`);
   log(`  OpenCode URL: ${backendConfig.base_url}`);
 
+  if (!BACKEND_TOKEN) {
+    throw new Error("BACKEND_TOKEN environment variable must be set");
+  }
   if (!backendConfig.base_url) {
     throw new Error("BACKEND_CONFIG must include 'base_url'");
   }
