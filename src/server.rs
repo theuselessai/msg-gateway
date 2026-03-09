@@ -19,6 +19,7 @@ use crate::config::Config;
 use crate::error::AppError;
 use crate::files::FileCache;
 use crate::generic::{self, WsRegistry};
+use crate::guardrail::{GuardrailEngine, GuardrailVerdict, load_rules_from_dir};
 use crate::health::HealthMonitor;
 use crate::manager::CredentialManager;
 use crate::message::WsOutboundMessage;
@@ -32,6 +33,7 @@ pub struct AppState {
     pub skip_reload_until: RwLock<Option<std::time::Instant>>,
     pub health_monitor: HealthMonitor,
     pub file_cache: Option<Arc<FileCache>>,
+    pub guardrail_engine: RwLock<GuardrailEngine>,
 }
 
 use std::future::Future;
@@ -72,6 +74,13 @@ pub async fn create_server(
         None
     };
 
+    let guardrail_rules = if let Some(ref dir) = config.gateway.guardrails_dir {
+        load_rules_from_dir(std::path::Path::new(dir))
+    } else {
+        vec![]
+    };
+    let guardrail_engine = GuardrailEngine::from_rules(guardrail_rules);
+
     let state = Arc::new(AppState {
         config: RwLock::new(config),
         ws_registry: generic::new_ws_registry(),
@@ -81,6 +90,7 @@ pub async fn create_server(
         skip_reload_until: RwLock::new(None),
         health_monitor: HealthMonitor::new(max_buffer_size),
         file_cache,
+        guardrail_engine: RwLock::new(guardrail_engine),
     });
 
     let app = Router::new()
@@ -630,6 +640,16 @@ async fn adapter_inbound(
         timestamp,
         extra_data: payload.extra_data,
     };
+
+    if !state.guardrail_engine.read().await.is_empty() {
+        let engine = state.guardrail_engine.read().await;
+        match engine.evaluate_inbound(&inbound) {
+            GuardrailVerdict::Block { reject_message, .. } => {
+                return Err(AppError::Forbidden(reject_message));
+            }
+            GuardrailVerdict::Allow => {}
+        }
+    }
 
     // Check health state
     let health_state = state.health_monitor.get_state().await;

@@ -1772,3 +1772,121 @@ async fn test_opencode_backend_error_response() {
     let health_resp = client.get(server.url("/health")).send().await.unwrap();
     assert!(health_resp.status().is_success());
 }
+
+// ============================================================================
+// Guardrail Integration Tests
+// ============================================================================
+
+/// Helper: create a guardrails dir with a block rule that matches text containing "blocked"
+fn guardrail_block_rule_dir() -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    let rule = r#"{"name":"block-test","expression":"message.text.contains(\"blocked\")","action":"block","reject_message":"Content blocked by guardrail"}"#;
+    std::fs::write(dir.path().join("01-block.json"), rule).unwrap();
+    dir
+}
+
+/// POST inbound with block rule + matching text → HTTP 403 + error body
+#[tokio::test]
+async fn test_guardrail_blocks_matching_inbound() {
+    let guardrails_dir = guardrail_block_rule_dir();
+    let port = find_available_port().await;
+    let mut config = test_config(port);
+    config.gateway.guardrails_dir = Some(guardrails_dir.path().to_string_lossy().into_owned());
+
+    let server = TestServer::new(config).await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "This message is blocked by rule",
+            "chat_id": "guardrail-test",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "Content blocked by guardrail");
+}
+
+/// POST inbound with block rule + non-matching text → HTTP 202
+#[tokio::test]
+async fn test_guardrail_allows_non_matching_inbound() {
+    let guardrails_dir = guardrail_block_rule_dir();
+    let port = find_available_port().await;
+    let mut config = test_config(port);
+    config.gateway.guardrails_dir = Some(guardrails_dir.path().to_string_lossy().into_owned());
+
+    let server = TestServer::new(config).await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "This is a perfectly fine message",
+            "chat_id": "guardrail-test",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 202);
+}
+
+/// POST inbound with no rules → HTTP 202 (passthrough)
+#[tokio::test]
+async fn test_guardrail_passthrough_no_rules() {
+    let port = find_available_port().await;
+    let config = test_config(port); // guardrails_dir is None
+
+    let server = TestServer::new(config).await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "Any message at all",
+            "chat_id": "guardrail-test",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 202);
+}
+
+/// Generic adapter chat_inbound with block rule → HTTP 403
+#[tokio::test]
+async fn test_guardrail_blocks_generic_chat_inbound() {
+    let guardrails_dir = guardrail_block_rule_dir();
+    let port = find_available_port().await;
+    let mut config = test_config(port);
+    config.gateway.guardrails_dir = Some(guardrails_dir.path().to_string_lossy().into_owned());
+
+    let server = TestServer::new(config).await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "message containing blocked word",
+            "chat_id": "guardrail-chat",
+            "from": {"id": "user2", "display_name": "Test User"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["error"].as_str().unwrap().contains("blocked"));
+}

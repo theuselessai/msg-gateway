@@ -35,7 +35,6 @@ pub enum AppError {
     BadRequest(String),
 
     #[error("Forbidden: {0}")]
-    #[allow(dead_code)]
     Forbidden(String),
 
     #[error("Internal error: {0}")]
