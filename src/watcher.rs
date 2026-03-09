@@ -115,39 +115,15 @@ pub async fn watch_config(
                 }
 
                 tracing::info!("Config file changed, reloading...");
-
-                match config::load_config(&config_path) {
-                    Ok(new_config) => {
-                        let old_config = state.config.read().await.clone();
-
-                        {
-                            let mut config = state.config.write().await;
-                            *config = new_config.clone();
-                        }
-
-                        sync_adapters(&old_config, &new_config, &manager, &adapter_manager).await;
-
-                        // Sync backend instances with new config
-                        sync_backends(&old_config, &new_config, &state).await;
-
-                        tracing::info!("Config reloaded successfully");
-                        last_config_reload = std::time::Instant::now();
-                    }
-                    Err(e) => {
-                        tracing::error!(error = %e, "Failed to reload config, keeping old config");
-                    }
-                }
+                perform_config_reload(&config_path, &state, &manager, &adapter_manager).await;
+                last_config_reload = std::time::Instant::now();
 
                 if also_reload_guardrails
                     && watching_guardrails
                     && let Some(ref dir) = guardrails_dir
                 {
                     tracing::info!(path = %dir, "Guardrails directory changed (detected during config drain), reloading rules...");
-                    let rules = load_rules_from_dir(Path::new(dir));
-                    let new_engine = GuardrailEngine::from_rules(rules);
-                    let mut engine = state.guardrail_engine.write().await;
-                    *engine = new_engine;
-                    tracing::info!(path = %dir, "Guardrail rules reloaded successfully");
+                    perform_guardrail_reload(dir, &state).await;
                     last_guardrail_reload = std::time::Instant::now();
                 }
             }
@@ -173,16 +149,7 @@ pub async fn watch_config(
                     .as_deref()
                     .expect("guardrails_dir is Some when watching_guardrails is true");
                 tracing::info!(path = %dir, "Guardrails directory changed, reloading rules...");
-
-                let rules = load_rules_from_dir(Path::new(dir));
-                let new_engine = GuardrailEngine::from_rules(rules);
-
-                {
-                    let mut engine = state.guardrail_engine.write().await;
-                    *engine = new_engine;
-                }
-
-                tracing::info!(path = %dir, "Guardrail rules reloaded successfully");
+                perform_guardrail_reload(dir, &state).await;
                 last_guardrail_reload = std::time::Instant::now();
 
                 if also_reload_config {
@@ -196,23 +163,9 @@ pub async fn watch_config(
                         tracing::info!(
                             "Config file changed (detected during guardrails drain), reloading..."
                         );
-                        match config::load_config(&config_path) {
-                            Ok(new_config) => {
-                                let old_config = state.config.read().await.clone();
-                                {
-                                    let mut config = state.config.write().await;
-                                    *config = new_config.clone();
-                                }
-                                sync_adapters(&old_config, &new_config, &manager, &adapter_manager)
-                                    .await;
-                                sync_backends(&old_config, &new_config, &state).await;
-                                tracing::info!("Config reloaded successfully");
-                                last_config_reload = std::time::Instant::now();
-                            }
-                            Err(e) => {
-                                tracing::error!(error = %e, "Failed to reload config, keeping old config");
-                            }
-                        }
+                        perform_config_reload(&config_path, &state, &manager, &adapter_manager)
+                            .await;
+                        last_config_reload = std::time::Instant::now();
                     }
                 }
             }
@@ -220,6 +173,39 @@ pub async fn watch_config(
     }
 
     Ok(())
+}
+
+async fn perform_config_reload(
+    config_path: &str,
+    state: &Arc<AppState>,
+    manager: &Arc<CredentialManager>,
+    adapter_manager: &Arc<AdapterInstanceManager>,
+) {
+    match config::load_config(config_path) {
+        Ok(new_config) => {
+            let old_config = state.config.read().await.clone();
+            {
+                let mut config = state.config.write().await;
+                *config = new_config.clone();
+            }
+            sync_adapters(&old_config, &new_config, manager, adapter_manager).await;
+            sync_backends(&old_config, &new_config, state).await;
+            tracing::info!("Config reloaded successfully");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to reload config, keeping old config");
+        }
+    }
+}
+
+async fn perform_guardrail_reload(dir: &str, state: &Arc<AppState>) {
+    let rules = load_rules_from_dir(Path::new(dir));
+    let new_engine = GuardrailEngine::from_rules(rules);
+    {
+        let mut engine = state.guardrail_engine.write().await;
+        *engine = new_engine;
+    }
+    tracing::info!(path = %dir, "Guardrail rules reloaded successfully");
 }
 
 /// Sync adapter instances with config changes
