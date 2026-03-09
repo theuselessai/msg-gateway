@@ -1,0 +1,10 @@
+{
+  "name": "block-sensitive-keywords",
+  "type": "cel",
+  "expression": "message.text.matches(\"(?i)(password|secret|api_key)\")",
+  "action": "block",
+  "direction": "inbound",
+  "on_error": "allow",
+  "reject_message": "Message contains sensitive keywords and cannot be forwarded.",
+  "enabled": true
+}

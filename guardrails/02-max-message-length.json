@@ -1,0 +1,10 @@
+{
+  "name": "max-message-length",
+  "type": "cel",
+  "expression": "size(message.text) > 10000",
+  "action": "block",
+  "direction": "inbound",
+  "on_error": "allow",
+  "reject_message": "Message exceeds the maximum allowed length of 10000 characters.",
+  "enabled": true
+}

@@ -5,6 +5,7 @@
     "default_backend": "pipelit",
     "adapters_dir": "./adapters",
     "adapter_port_range": [9000, 9100],
+    "guardrails_dir": "./guardrails",
     "backends_dir": "./backends",
     "backend_port_range": [9200, 9300]
   },
