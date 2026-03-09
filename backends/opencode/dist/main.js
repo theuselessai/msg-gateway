@@ -24,6 +24,13 @@ function log(msg) {
     const ts = new Date().toISOString();
     process.stderr.write(`[${ts}] [${INSTANCE_ID}] ${msg}\n`);
 }
+function logError(prefix, err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`${prefix}: ${msg}`);
+    if (err instanceof Error && err.stack) {
+        log(err.stack);
+    }
+}
 function verifyBearer(header, token) {
     if (!token)
         return false;
@@ -143,7 +150,7 @@ function handleEvent(event) {
         pending.delete(sessionId);
         // fetch response and relay — fire and forget
         fetchAndRelay(sessionId, entry.credentialId, entry.chatId).catch(err => {
-            log(`Error relaying response for session ${sessionId}: ${err}`);
+            logError(`Error relaying response for session ${sessionId}`, err);
         });
     }
     else if (event.type === "session.error") {
@@ -160,7 +167,7 @@ function handleEvent(event) {
 }
 function startEventStream() {
     const es = (0, eventsource_client_1.createEventSource)({
-        url: `${backendConfig.base_url}/event`,
+        url: `${backendConfig.base_url}/global/event`,
         headers: { Authorization: basicAuthHeader() },
         onMessage: ({ data }) => {
             if (!data)
@@ -169,7 +176,9 @@ function startEventStream() {
                 const globalEvent = JSON.parse(data);
                 handleEvent(globalEvent.payload);
             }
-            catch { /* ignore parse errors */ }
+            catch (err) {
+                logError("SSE parse error", err);
+            }
         },
         onDisconnect: () => {
             if (!shuttingDown) {
@@ -276,7 +285,7 @@ async function shutdown(signal, eventSource) {
         await app.close();
     }
     catch (err) {
-        log(`Error during shutdown: ${err}`);
+        logError("Error during shutdown", err);
     }
     log("Backend adapter stopped");
     process.exit(0);
@@ -311,6 +320,6 @@ async function main() {
     log(`HTTP server listening on port ${BACKEND_PORT}`);
 }
 main().catch((err) => {
-    log(`Fatal error: ${err}`);
+    logError("Fatal error", err);
     process.exit(1);
 });

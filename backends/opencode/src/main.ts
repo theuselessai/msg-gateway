@@ -32,6 +32,14 @@ function log(msg: string): void {
   process.stderr.write(`[${ts}] [${INSTANCE_ID}] ${msg}\n`);
 }
 
+function logError(prefix: string, err: unknown): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  log(`${prefix}: ${msg}`);
+  if (err instanceof Error && err.stack) {
+    log(err.stack);
+  }
+}
+
 function verifyBearer(header: string, token: string): boolean {
   if (!token) return false;
   const expectedBuf = Buffer.from(`Bearer ${token}`);
@@ -198,7 +206,7 @@ function handleEvent(event: { type: string; properties: Record<string, unknown> 
     pending.delete(sessionId);
     // fetch response and relay — fire and forget
     fetchAndRelay(sessionId, entry.credentialId, entry.chatId).catch(err => {
-      log(`Error relaying response for session ${sessionId}: ${err}`);
+      logError(`Error relaying response for session ${sessionId}`, err);
     });
   } else if (event.type === "session.error") {
     const sessionId = event.properties.sessionID as string | undefined;
@@ -215,14 +223,16 @@ function handleEvent(event: { type: string; properties: Record<string, unknown> 
 
 function startEventStream(): ReturnType<typeof createEventSource> {
   const es = createEventSource({
-    url: `${backendConfig.base_url}/event`,
+    url: `${backendConfig.base_url}/global/event`,
     headers: { Authorization: basicAuthHeader() },
     onMessage: ({ data }) => {
       if (!data) return;
       try {
         const globalEvent = JSON.parse(data) as { payload: { type: string; properties: Record<string, unknown> } };
         handleEvent(globalEvent.payload);
-      } catch { /* ignore parse errors */ }
+      } catch (err) {
+        logError("SSE parse error", err);
+      }
     },
     onDisconnect: () => {
       if (!shuttingDown) {
@@ -349,7 +359,7 @@ async function shutdown(signal: string, eventSource: ReturnType<typeof createEve
   try {
     await app.close();
   } catch (err) {
-    log(`Error during shutdown: ${err}`);
+    logError("Error during shutdown", err);
   }
   log("Backend adapter stopped");
   process.exit(0);
@@ -390,6 +400,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  log(`Fatal error: ${err}`);
+  logError("Fatal error", err);
   process.exit(1);
 });

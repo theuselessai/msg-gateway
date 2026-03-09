@@ -120,6 +120,12 @@ Week 3-4: Phase 2b — New Adapters
 - Webhook adapter (generic inbound webhooks)
 - Message transformation plugins
 - Multi-tenant support
+- **Per-credential backend isolation**: Current backend model is singleton-per-name (one process shared
+  across all credentials pointing to the same backend). This breaks when credentials need different
+  upstream endpoints or isolated accounts (e.g. each user has their own OpenCode instance, or
+  per-credential Pipelit tokens). Fix: spawn one backend subprocess per credential, using
+  `CREDENTIAL_CONFIG` to carry per-credential config — same pattern as external adapters.
+  See `docs/architecture.md` § Backend Scaling Model.
 
 ## Related Projects
 

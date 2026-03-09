@@ -442,7 +442,7 @@ impl ExternalBackendManager {
             .env("GATEWAY_SEND_TOKEN", &self.gateway_send_token)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stderr(std::process::Stdio::piped());
 
         if let Some(cfg) = &backend_cfg.config {
             cmd.env(
@@ -458,7 +458,7 @@ impl ExternalBackendManager {
             "Spawning external backend adapter process"
         );
 
-        let process = match cmd.spawn() {
+        let mut process = match cmd.spawn() {
             Ok(p) => p,
             Err(e) => {
                 self.port_allocator.release(port).await;
@@ -468,6 +468,18 @@ impl ExternalBackendManager {
                 )));
             }
         };
+
+        // Forward subprocess stderr to tracing (Node.js adapter logs to stderr)
+        if let Some(stderr) = process.stderr.take() {
+            let name = backend_name.to_string();
+            tokio::spawn(async move {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    tracing::info!(backend = %name, "{}", line);
+                }
+            });
+        }
 
         let mut processes = self.processes.write().await;
         processes.insert(
