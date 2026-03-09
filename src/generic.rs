@@ -120,7 +120,7 @@ pub async fn chat_inbound(
     let adapter = match crate::backend::create_adapter(
         backend_cfg,
         Some(&gateway_ctx),
-        backend_cfg.config.as_ref(),
+        credential.config.as_ref().or(backend_cfg.config.as_ref()),
     ) {
         Ok(a) => a,
         Err(e) => {

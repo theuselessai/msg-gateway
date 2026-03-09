@@ -1,6 +1,6 @@
 {
   "gateway": {
-    "listen": "0.0.0.0:8080",
+    "listen": "127.0.0.1:8080",
     "admin_token": "${GATEWAY_ADMIN_TOKEN}",
     "default_backend": "pipelit",
     "adapters_dir": "./adapters",

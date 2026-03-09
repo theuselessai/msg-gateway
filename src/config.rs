@@ -152,6 +152,27 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, AppError> {
     let config: Config = serde_json::from_str(&resolved)
         .map_err(|e| AppError::Config(format!("Failed to parse config: {}", e)))?;
 
+    // Validate backend name references
+    if let Some(ref default_backend) = config.gateway.default_backend
+        && !config.backends.contains_key(default_backend)
+    {
+        return Err(AppError::Config(format!(
+            "default_backend '{}' not found in backends map",
+            default_backend
+        )));
+    }
+
+    for (cred_id, cred) in &config.credentials {
+        if let Some(ref backend) = cred.backend
+            && !config.backends.contains_key(backend)
+        {
+            return Err(AppError::Config(format!(
+                "Credential '{}' references unknown backend '{}'",
+                cred_id, backend
+            )));
+        }
+    }
+
     Ok(config)
 }
 
@@ -278,6 +299,43 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, AppError::Config(_)));
+    }
+
+    #[test]
+    fn test_load_config_invalid_default_backend() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+        let content = r#"{
+            "gateway": {"listen": "127.0.0.1:8080", "admin_token": "a", "default_backend": "nonexistent"},
+            "auth": {"send_token": "s"}
+        }"#;
+        std::fs::write(&config_path, content).unwrap();
+        let result = load_config(&config_path);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::Config(_)));
+    }
+
+    #[test]
+    fn test_load_config_invalid_credential_backend() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.json");
+        let content = r#"{
+            "gateway": {"listen": "127.0.0.1:8080", "admin_token": "a"},
+            "auth": {"send_token": "s"},
+            "credentials": {
+                "test_cred": {
+                    "adapter": "generic",
+                    "token": "token123",
+                    "active": true,
+                    "backend": "nonexistent",
+                    "route": {"channel": "test"}
+                }
+            }
+        }"#;
+        std::fs::write(&config_path, content).unwrap();
+        let result = load_config(&config_path);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::Config(_)));
     }
 
     #[test]

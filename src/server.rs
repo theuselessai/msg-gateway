@@ -543,7 +543,7 @@ async fn adapter_inbound(
     let backend_adapter = crate::backend::create_adapter(
         backend_cfg,
         Some(&gateway_ctx),
-        backend_cfg.config.as_ref(),
+        credential.config.as_ref().or(backend_cfg.config.as_ref()),
     )
     .map_err(|e| AppError::Internal(format!("Failed to create backend adapter: {}", e)))?;
     drop(config);

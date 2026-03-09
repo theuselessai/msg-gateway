@@ -65,6 +65,7 @@ pub struct CredentialResponse {
     pub active: bool,
     pub emergency: bool,
     pub config: Option<serde_json::Value>,
+    pub backend: Option<String>,
     pub route: serde_json::Value,
     pub instance_status: Option<String>,
 }
@@ -89,6 +90,7 @@ pub async fn get_credential(
         active: cred.active,
         emergency: cred.emergency,
         config: cred.config.clone(),
+        backend: cred.backend.clone(),
         route: cred.route.clone(),
         instance_status: instance_status.map(|s| format!("{:?}", s)),
     }))
@@ -476,6 +478,7 @@ mod tests {
             active: true,
             emergency: false,
             config: Some(serde_json::json!({"key": "value"})),
+            backend: None,
             route: serde_json::json!({"type": "default"}),
             instance_status: Some("Running".to_string()),
         };
@@ -496,6 +499,7 @@ mod tests {
             active: false,
             emergency: true,
             config: None,
+            backend: None,
             route: serde_json::json!(null),
             instance_status: None,
         };
@@ -556,6 +560,7 @@ mod tests {
             active: true,
             emergency: false,
             config: None,
+            backend: None,
             route: serde_json::json!({}),
             instance_status: None,
         };

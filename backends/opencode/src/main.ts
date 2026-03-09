@@ -6,6 +6,8 @@ const GATEWAY_URL = process.env.GATEWAY_URL ?? "http://localhost:8080";
 const BACKEND_TOKEN = process.env.BACKEND_TOKEN ?? "";
 const GATEWAY_SEND_TOKEN = process.env.GATEWAY_SEND_TOKEN ?? "";
 
+const MAX_SESSIONS = 10_000;
+
 interface BackendConfig {
   base_url: string;
   token: string;
@@ -130,6 +132,10 @@ async function getOrCreateSession(
 
   const data = (await resp.json()) as { id: string };
   const sessionId = data.id;
+  if (sessions.size >= MAX_SESSIONS) {
+    const oldestKey = sessions.keys().next().value;
+    if (oldestKey !== undefined) sessions.delete(oldestKey);
+  }
   sessions.set(sessionKey, sessionId);
   log(`Session created: ${sessionId} for ${sessionKey}`);
   return sessionId;
@@ -293,6 +299,10 @@ async function main(): Promise<void> {
   }
   if (!backendConfig.model) {
     throw new Error("BACKEND_CONFIG must include 'model' with providerID and modelID");
+  }
+  if (!GATEWAY_SEND_TOKEN) {
+    log("FATAL: GATEWAY_SEND_TOKEN environment variable must be set");
+    process.exit(1);
   }
 
   await app.listen({
