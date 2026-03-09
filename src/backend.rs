@@ -167,8 +167,7 @@ impl BackendAdapter for OpencodeAdapter {
         // Build client with 120s timeout for LLM calls
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
-            .build()
-            .expect("Failed to build HTTP client with timeout");
+            .build()?;
 
         let chat_id = &message.source.chat_id;
         let session_key = format!("{}:{}", message.credential_id, chat_id);
