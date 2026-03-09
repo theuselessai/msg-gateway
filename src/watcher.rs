@@ -344,6 +344,7 @@ mod tests {
                 backends_dir: "./backends".to_string(),
                 backend_port_range: (9200, 9300),
                 file_cache: None,
+                guardrails_dir: None,
             },
             auth: AuthConfig {
                 send_token: "test-send-token".to_string(),

@@ -37,6 +37,8 @@ pub struct GatewayConfig {
     pub backend_port_range: (u16, u16),
     #[serde(default)]
     pub file_cache: Option<FileCacheConfig>,
+    #[serde(default)]
+    pub guardrails_dir: Option<String>,
 }
 
 fn default_adapters_dir() -> String {
@@ -221,13 +223,13 @@ pub struct CredentialConfig {
 
 /// Load config from file, resolving environment variables
 pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, AppError> {
+    let path = path.as_ref();
     let content = fs::read_to_string(path)
         .map_err(|e| AppError::Config(format!("Failed to read config file: {}", e)))?;
 
-    // Resolve environment variables in the content
     let resolved = resolve_env_vars(&content)?;
 
-    let config: Config = serde_json::from_str(&resolved)
+    let mut config: Config = serde_json::from_str(&resolved)
         .map_err(|e| AppError::Config(format!("Failed to parse config: {}", e)))?;
 
     // Validate backend name references
@@ -251,7 +253,27 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, AppError> {
         }
     }
 
+    let config_dir = path.parent().unwrap_or(Path::new("."));
+    resolve_guardrails_dir(&mut config.gateway, config_dir);
+
     Ok(config)
+}
+
+fn resolve_guardrails_dir(gateway: &mut GatewayConfig, config_dir: &Path) {
+    match &gateway.guardrails_dir {
+        Some(dir) => {
+            let p = Path::new(dir);
+            if p.is_relative() {
+                gateway.guardrails_dir = Some(config_dir.join(p).to_string_lossy().into_owned());
+            }
+        }
+        None => {
+            let auto = config_dir.join("guardrails");
+            if auto.exists() {
+                gateway.guardrails_dir = Some(auto.to_string_lossy().into_owned());
+            }
+        }
+    }
 }
 
 /// Resolve config file path using XDG conventions.
@@ -630,6 +652,7 @@ mod tests {
             backends_dir: "./backends".to_string(),
             backend_port_range: (9200, 9300),
             file_cache: None,
+            guardrails_dir: None,
         };
 
         let json = serde_json::to_string(&gateway).unwrap();
@@ -667,6 +690,7 @@ mod tests {
                 backends_dir: "./backends".to_string(),
                 backend_port_range: (9200, 9300),
                 file_cache: None,
+                guardrails_dir: None,
             },
             auth: AuthConfig {
                 send_token: "send".to_string(),
@@ -1036,5 +1060,98 @@ mod tests {
             std::env::remove_var("HOME");
         }
         assert_eq!(result, xdg_file);
+    }
+
+    // ==================== guardrails_dir Tests ====================
+
+    fn make_minimal_gateway(guardrails_dir: Option<String>) -> GatewayConfig {
+        GatewayConfig {
+            listen: "127.0.0.1:8080".to_string(),
+            admin_token: "token".to_string(),
+            default_backend: None,
+            adapters_dir: "./adapters".to_string(),
+            adapter_port_range: (9000, 9100),
+            backends_dir: "./backends".to_string(),
+            backend_port_range: (9200, 9300),
+            file_cache: None,
+            guardrails_dir,
+        }
+    }
+
+    #[test]
+    fn test_guardrails_dir_auto_discovery() {
+        let temp_dir = TempDir::new().unwrap();
+        let guardrails_path = temp_dir.path().join("guardrails");
+        std::fs::create_dir_all(&guardrails_path).unwrap();
+
+        let mut gateway = make_minimal_gateway(None);
+        resolve_guardrails_dir(&mut gateway, temp_dir.path());
+
+        assert_eq!(
+            gateway.guardrails_dir,
+            Some(guardrails_path.to_string_lossy().into_owned())
+        );
+    }
+
+    #[test]
+    fn test_guardrails_dir_none_no_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut gateway = make_minimal_gateway(None);
+        resolve_guardrails_dir(&mut gateway, temp_dir.path());
+        assert_eq!(gateway.guardrails_dir, None);
+    }
+
+    #[test]
+    fn test_guardrails_dir_relative_resolved() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut gateway = make_minimal_gateway(Some("./my_rules".to_string()));
+        resolve_guardrails_dir(&mut gateway, temp_dir.path());
+        let result = gateway.guardrails_dir.unwrap();
+        assert!(
+            result.contains("my_rules"),
+            "Expected path to contain 'my_rules', got: {}",
+            result
+        );
+        assert!(
+            result.starts_with(temp_dir.path().to_str().unwrap()),
+            "Expected path to start with temp dir"
+        );
+    }
+
+    #[test]
+    fn test_guardrails_dir_absolute_unchanged() {
+        let temp_dir = TempDir::new().unwrap();
+        let abs_path = "/absolute/path/to/rules".to_string();
+        let mut gateway = make_minimal_gateway(Some(abs_path.clone()));
+        resolve_guardrails_dir(&mut gateway, temp_dir.path());
+        assert_eq!(gateway.guardrails_dir, Some(abs_path));
+    }
+
+    #[test]
+    fn test_guardrails_dir_serde_absent() {
+        let json = r#"{"name":"test","expression":"true"}"#;
+        let rule: GuardrailRule = serde_json::from_str(json).unwrap();
+        assert!(rule.enabled);
+    }
+
+    #[test]
+    fn test_guardrails_dir_field_in_gateway_config() {
+        let json = r#"{
+            "listen": "127.0.0.1:8080",
+            "admin_token": "tok",
+            "guardrails_dir": "/my/rules"
+        }"#;
+        let gw: GatewayConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(gw.guardrails_dir, Some("/my/rules".to_string()));
+    }
+
+    #[test]
+    fn test_guardrails_dir_absent_defaults_none() {
+        let json = r#"{
+            "listen": "127.0.0.1:8080",
+            "admin_token": "tok"
+        }"#;
+        let gw: GatewayConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(gw.guardrails_dir, None);
     }
 }

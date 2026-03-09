@@ -41,6 +41,7 @@ fn test_config(port: u16) -> Config {
             backends_dir: "./backends".to_string(),
             backend_port_range: (19200, 19300),
             file_cache: None,
+            guardrails_dir: None,
         },
         auth: AuthConfig {
             send_token: "test_send_token".to_string(),
@@ -1441,6 +1442,7 @@ fn test_config_with_opencode_backend(gateway_port: u16, opencode_port: u16) -> C
             backends_dir: "./backends".to_string(),
             backend_port_range: (19200, 19300),
             file_cache: None,
+            guardrails_dir: None,
         },
         auth: AuthConfig {
             send_token: "test_send_token".to_string(),
