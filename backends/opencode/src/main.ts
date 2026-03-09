@@ -32,6 +32,14 @@ function log(msg: string): void {
   process.stderr.write(`[${ts}] [${INSTANCE_ID}] ${msg}\n`);
 }
 
+function logError(prefix: string, err: unknown): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  log(`${prefix}: ${msg}`);
+  if (err instanceof Error && err.stack) {
+    log(err.stack);
+  }
+}
+
 function verifyBearer(header: string, token: string): boolean {
   if (!token) return false;
   const expectedBuf = Buffer.from(`Bearer ${token}`);
@@ -198,11 +206,7 @@ function handleEvent(event: { type: string; properties: Record<string, unknown> 
     pending.delete(sessionId);
     // fetch response and relay — fire and forget
     fetchAndRelay(sessionId, entry.credentialId, entry.chatId).catch(err => {
-      const msg = err instanceof Error ? err.message : String(err);
-      log(`Error relaying response for session ${sessionId}: ${msg}`);
-      if (err instanceof Error && err.stack) {
-        log(err.stack);
-      }
+      logError(`Error relaying response for session ${sessionId}`, err);
     });
   } else if (event.type === "session.error") {
     const sessionId = event.properties.sessionID as string | undefined;
@@ -227,11 +231,7 @@ function startEventStream(): ReturnType<typeof createEventSource> {
         const globalEvent = JSON.parse(data) as { payload: { type: string; properties: Record<string, unknown> } };
         handleEvent(globalEvent.payload);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log(`SSE parse error: ${msg}`);
-        if (err instanceof Error && err.stack) {
-          log(err.stack);
-        }
+        logError("SSE parse error", err);
       }
     },
     onDisconnect: () => {
@@ -359,11 +359,7 @@ async function shutdown(signal: string, eventSource: ReturnType<typeof createEve
   try {
     await app.close();
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Error during shutdown: ${msg}`);
-    if (err instanceof Error && err.stack) {
-      log(err.stack);
-    }
+    logError("Error during shutdown", err);
   }
   log("Backend adapter stopped");
   process.exit(0);
@@ -404,10 +400,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  const msg = err instanceof Error ? err.message : String(err);
-  log(`Fatal error: ${msg}`);
-  if (err instanceof Error && err.stack) {
-    log(err.stack);
-  }
+  logError("Fatal error", err);
   process.exit(1);
 });

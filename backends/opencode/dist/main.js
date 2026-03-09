@@ -24,6 +24,13 @@ function log(msg) {
     const ts = new Date().toISOString();
     process.stderr.write(`[${ts}] [${INSTANCE_ID}] ${msg}\n`);
 }
+function logError(prefix, err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`${prefix}: ${msg}`);
+    if (err instanceof Error && err.stack) {
+        log(err.stack);
+    }
+}
 function verifyBearer(header, token) {
     if (!token)
         return false;
@@ -143,11 +150,7 @@ function handleEvent(event) {
         pending.delete(sessionId);
         // fetch response and relay — fire and forget
         fetchAndRelay(sessionId, entry.credentialId, entry.chatId).catch(err => {
-            const msg = err instanceof Error ? err.message : String(err);
-            log(`Error relaying response for session ${sessionId}: ${msg}`);
-            if (err instanceof Error && err.stack) {
-                log(err.stack);
-            }
+            logError(`Error relaying response for session ${sessionId}`, err);
         });
     }
     else if (event.type === "session.error") {
@@ -174,11 +177,7 @@ function startEventStream() {
                 handleEvent(globalEvent.payload);
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                log(`SSE parse error: ${msg}`);
-                if (err instanceof Error && err.stack) {
-                    log(err.stack);
-                }
+                logError("SSE parse error", err);
             }
         },
         onDisconnect: () => {
@@ -286,11 +285,7 @@ async function shutdown(signal, eventSource) {
         await app.close();
     }
     catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log(`Error during shutdown: ${msg}`);
-        if (err instanceof Error && err.stack) {
-            log(err.stack);
-        }
+        logError("Error during shutdown", err);
     }
     log("Backend adapter stopped");
     process.exit(0);
@@ -325,10 +320,6 @@ async function main() {
     log(`HTTP server listening on port ${BACKEND_PORT}`);
 }
 main().catch((err) => {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Fatal error: ${msg}`);
-    if (err instanceof Error && err.stack) {
-        log(err.stack);
-    }
+    logError("Fatal error", err);
     process.exit(1);
 });
