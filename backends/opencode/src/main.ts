@@ -117,7 +117,6 @@ async function getOrCreateSession(
     method: "POST",
     headers: {
       Authorization: basicAuthHeader(),
-      "Content-Type": "application/json",
     },
   });
 
