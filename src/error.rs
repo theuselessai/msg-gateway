@@ -115,6 +115,10 @@ mod tests {
             "Bad request: missing field"
         );
         assert_eq!(
+            AppError::Forbidden("access denied".to_string()).to_string(),
+            "Forbidden: access denied"
+        );
+        assert_eq!(
             AppError::Internal("oops".to_string()).to_string(),
             "Internal error: oops"
         );

@@ -37,7 +37,11 @@ async fn main() -> anyhow::Result<()> {
     // Load config
     let config_path = config::resolve_config_path();
 
-    let config = config::load_config(config_path.to_str().unwrap_or("config.json"))?;
+    let config = config::load_config(
+        config_path
+            .to_str()
+            .expect("Config path contains invalid UTF-8"),
+    )?;
     tracing::info!(listen = %config.gateway.listen, "Configuration loaded");
 
     // Create adapter instance manager

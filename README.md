@@ -163,12 +163,12 @@ message.source.protocol == "telegram"
 ### Limitations
 
 - **`matches()` uses Rust regex syntax**, not RE2 or the Google CEL spec. Lookaheads and backreferences are not supported. Case-insensitive matching uses the `(?i)` flag.
-- **`has()` is not available.** Fields that may be absent (like `files`) are pre-converted to `null` by the gateway. Use `on_error: "allow"` (the default) to handle missing fields gracefully instead of failing closed.
+- **`has()` is not available.** Optional fields are pre-converted to `null` by the gateway when present, but fields with `skip_serializing_if` (like empty `attachments`) may be absent from the CEL context entirely. Use `on_error: "allow"` (the default) to handle evaluation errors from missing fields gracefully.
 - Outbound guardrails are not evaluated in v1. Only `"direction": "inbound"` rules take effect.
 
 ### Hot reload
 
-Guardrail rules reload automatically when the config file changes. No restart needed. New or modified rule files in `guardrails_dir` are picked up on the next reload cycle.
+Guardrail rules reload automatically when rule files in `guardrails_dir` change. No restart needed.
 
 ### Configuration
 
