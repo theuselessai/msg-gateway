@@ -374,6 +374,7 @@ async fn drain_buffered_messages(state: &AppState, messages: Vec<InboundMessage>
             }
         } else {
             tracing::warn!(
+                message_id = %message.source.message_id,
                 credential_id = %message.credential_id,
                 "Credential no longer exists, dropping buffered message"
             );

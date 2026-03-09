@@ -24,10 +24,11 @@ function log(msg) {
     process.stderr.write(`[${ts}] [${INSTANCE_ID}] ${msg}\n`);
 }
 function verifyBearer(header, token) {
-    const expected = `Bearer ${token}`;
-    if (header.length !== expected.length)
+    const expectedBuf = Buffer.from(`Bearer ${token}`);
+    const headerBuf = Buffer.from(header);
+    if (headerBuf.length !== expectedBuf.length)
         return false;
-    return (0, crypto_1.timingSafeEqual)(Buffer.from(header), Buffer.from(expected));
+    return (0, crypto_1.timingSafeEqual)(headerBuf, expectedBuf);
 }
 // Session management: {credential_id}:{chat_id} -> session_id
 const sessions = new Map();
@@ -39,7 +40,7 @@ async function retry(fn, retries = 3, baseDelay = 1000) {
         }
         catch (err) {
             lastError = err;
-            if (attempt < retries - 1) {
+            if (attempt < retries - 1 && !shuttingDown) {
                 const delay = baseDelay * Math.pow(2, attempt);
                 log(`Retry ${attempt + 1}/${retries} after ${delay}ms`);
                 await new Promise((r) => setTimeout(r, delay));
@@ -163,6 +164,10 @@ app.post("/send", async (request, reply) => {
         return { error: "Unauthorized" };
     }
     const message = request.body;
+    if (!message?.source?.chat_id || !message?.source?.from || typeof message?.text !== "string") {
+        reply.status(400);
+        return { error: "Invalid message: missing required fields (source.chat_id, source.from, text)" };
+    }
     const chatId = message.source.chat_id;
     const who = message.source.from.display_name ??
         message.source.from.username ??

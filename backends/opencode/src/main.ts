@@ -32,9 +32,10 @@ function log(msg: string): void {
 }
 
 function verifyBearer(header: string, token: string): boolean {
-  const expected = `Bearer ${token}`;
-  if (header.length !== expected.length) return false;
-  return timingSafeEqual(Buffer.from(header), Buffer.from(expected));
+  const expectedBuf = Buffer.from(`Bearer ${token}`);
+  const headerBuf = Buffer.from(header);
+  if (headerBuf.length !== expectedBuf.length) return false;
+  return timingSafeEqual(headerBuf, expectedBuf);
 }
 
 interface UserInfo {
@@ -82,7 +83,7 @@ async function retry<T>(
       return await fn();
     } catch (err) {
       lastError = err;
-      if (attempt < retries - 1) {
+      if (attempt < retries - 1 && !shuttingDown) {
         const delay = baseDelay * Math.pow(2, attempt);
         log(`Retry ${attempt + 1}/${retries} after ${delay}ms`);
         await new Promise((r) => setTimeout(r, delay));
@@ -245,6 +246,11 @@ app.post<{ Body: InboundMessage }>("/send", async (request, reply) => {
   }
 
   const message = request.body;
+  if (!message?.source?.chat_id || !message?.source?.from || typeof message?.text !== "string") {
+    reply.status(400);
+    return { error: "Invalid message: missing required fields (source.chat_id, source.from, text)" };
+  }
+
   const chatId = message.source.chat_id;
   const who =
     message.source.from.display_name ??
