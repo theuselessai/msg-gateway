@@ -409,7 +409,7 @@ impl ExternalBackendManager {
         credential_id: &str,
         adapter_dir_override: Option<&str>,
         backend_name: &str,
-        token: &str,
+        _token: &str,
         config: Option<&serde_json::Value>,
     ) -> Result<(u16, String), BackendError> {
         let adapter_dir = adapter_dir_override
@@ -433,7 +433,7 @@ impl ExternalBackendManager {
             .env("INSTANCE_ID", &instance_id)
             .env("BACKEND_PORT", port.to_string())
             .env("GATEWAY_URL", &self.gateway_url)
-            .env("BACKEND_TOKEN", token)
+            .env("BACKEND_TOKEN", &backend_token)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -481,6 +481,7 @@ impl ExternalBackendManager {
         let mut processes = self.processes.write().await;
         if let Some(mut process) = processes.remove(credential_id) {
             let _ = process.process.kill().await;
+            let _ = process.process.wait().await;
             self.port_allocator.release(process.port).await;
             tracing::info!(
                 credential_id = %credential_id,

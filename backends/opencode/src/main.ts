@@ -217,6 +217,12 @@ app.get("/health", async () => {
 });
 
 app.post<{ Body: InboundMessage }>("/send", async (request, reply) => {
+  const authHeader = request.headers.authorization;
+  if (!authHeader || authHeader !== `Bearer ${BACKEND_TOKEN}`) {
+    reply.status(401);
+    return { error: "Unauthorized" };
+  }
+
   const message = request.body;
   const chatId = message.source.chat_id;
   const who =
@@ -265,6 +271,10 @@ async function main(): Promise<void> {
   log(`  Port: ${BACKEND_PORT}`);
   log(`  Gateway: ${GATEWAY_URL}`);
   log(`  OpenCode URL: ${backendConfig.base_url}`);
+
+  if (!backendConfig.base_url) {
+    throw new Error("BACKEND_CONFIG must include 'base_url'");
+  }
 
   await app.listen({
     port: BACKEND_PORT,
