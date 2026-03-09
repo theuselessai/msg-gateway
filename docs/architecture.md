@@ -339,12 +339,12 @@ msg-gateway is a protocol bridge that connects user-facing communication platfor
 | Credential Manager | `src/manager.rs` | Credential task registry |
 | Config Watcher | `src/watcher.rs` | Hot reload on config changes |
 | Backend Adapters | `src/backend.rs` | Pipelit and OpenCode protocol adapters |
-| Generic Adapter | `src/generic.rs` | Built-in REST + WebSocket adapter |
+| Generic Adapter | `src/generic.rs` | built-in REST + WebSocket adapter |
 | Errors | `src/error.rs` | Error types and HTTP status mapping |
 
 ### Adapters
 
-1. **Built-in**: Generic adapter (REST inbound + WebSocket outbound), runs in-process
+1. **built-in**: Generic adapter (REST inbound + WebSocket outbound), runs in-process
 2. **External**: Telegram, Discord, Slack, Email — separate Node.js processes managed by gateway
 
 External adapters communicate with the gateway via:
@@ -373,7 +373,7 @@ Built-in backends are Rust struct implementations of the `BackendAdapter` trait,
 
 **Singleton-per-name model:** One adapter instance per named backend entry in `config.backends`, shared across all credentials referencing that backend.
 
-```rust
+```
 // Example: All credentials using "opencode" backend share one OpencodeAdapter instance
 config.backends:
   opencode  →  ONE OpencodeAdapter instance (in-process Rust)

@@ -143,7 +143,11 @@ function handleEvent(event) {
         pending.delete(sessionId);
         // fetch response and relay — fire and forget
         fetchAndRelay(sessionId, entry.credentialId, entry.chatId).catch(err => {
-            log(`Error relaying response for session ${sessionId}: ${err}`);
+            const msg = err instanceof Error ? err.message : String(err);
+            log(`Error relaying response for session ${sessionId}: ${msg}`);
+            if (err instanceof Error && err.stack) {
+                log(err.stack);
+            }
         });
     }
     else if (event.type === "session.error") {
