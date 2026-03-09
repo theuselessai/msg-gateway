@@ -26,6 +26,12 @@ pub struct GatewayConfig {
     /// Port range for adapter processes [start, end]
     #[serde(default = "default_adapter_port_range")]
     pub adapter_port_range: (u16, u16),
+    /// Directory containing backend adapter definitions
+    #[serde(default = "default_backends_dir")]
+    pub backends_dir: String,
+    /// Port range for backend adapter processes [start, end]
+    #[serde(default = "default_backend_port_range")]
+    pub backend_port_range: (u16, u16),
     #[serde(default)]
     pub file_cache: Option<FileCacheConfig>,
 }
@@ -38,6 +44,14 @@ fn default_adapter_port_range() -> (u16, u16) {
     (9000, 9100)
 }
 
+fn default_backends_dir() -> String {
+    "./backends".to_string()
+}
+
+fn default_backend_port_range() -> (u16, u16) {
+    (9200, 9300)
+}
+
 /// Backend protocol type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -46,6 +60,8 @@ pub enum BackendProtocol {
     Pipelit,
     /// OpenCode: REST + SSE polling
     Opencode,
+    /// External: subprocess-managed backend adapter (any language)
+    External,
 }
 
 /// Backend target configuration
@@ -63,6 +79,12 @@ pub struct TargetConfig {
     /// Poll interval for OpenCode (milliseconds)
     #[serde(default)]
     pub poll_interval_ms: Option<u64>,
+    /// Directory containing the external backend adapter (for External protocol)
+    #[serde(default)]
+    pub adapter_dir: Option<String>,
+    /// Port for pre-spawned external backend adapter
+    #[serde(default)]
+    pub port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -294,6 +316,10 @@ mod tests {
         let opencode = BackendProtocol::Opencode;
         let json = serde_json::to_string(&opencode).unwrap();
         assert_eq!(json, "\"opencode\"");
+
+        let external = BackendProtocol::External;
+        let json = serde_json::to_string(&external).unwrap();
+        assert_eq!(json, "\"external\"");
     }
 
     #[test]
@@ -303,6 +329,9 @@ mod tests {
 
         let opencode: BackendProtocol = serde_json::from_str("\"opencode\"").unwrap();
         assert_eq!(opencode, BackendProtocol::Opencode);
+
+        let external: BackendProtocol = serde_json::from_str("\"external\"").unwrap();
+        assert_eq!(external, BackendProtocol::External);
     }
 
     #[test]
@@ -313,6 +342,8 @@ mod tests {
             base_url: None,
             token: "test_token".to_string(),
             poll_interval_ms: None,
+            adapter_dir: None,
+            port: None,
         };
 
         let json = serde_json::to_string(&target).unwrap();
@@ -426,15 +457,20 @@ mod tests {
                 base_url: None,
                 token: "backend_token".to_string(),
                 poll_interval_ms: None,
+                adapter_dir: None,
+                port: None,
             },
             adapters_dir: "./adapters".to_string(),
             adapter_port_range: (9000, 9100),
+            backends_dir: "./backends".to_string(),
+            backend_port_range: (9200, 9300),
             file_cache: None,
         };
 
         let json = serde_json::to_string(&gateway).unwrap();
         assert!(json.contains("\"listen\":\"0.0.0.0:8080\""));
         assert!(json.contains("\"adapter_port_range\":[9000,9100]"));
+        assert!(json.contains("\"backend_port_range\":[9200,9300]"));
     }
 
     #[test]
@@ -449,9 +485,13 @@ mod tests {
                     base_url: None,
                     token: "token".to_string(),
                     poll_interval_ms: None,
+                    adapter_dir: None,
+                    port: None,
                 },
                 adapters_dir: "./adapters".to_string(),
                 adapter_port_range: (9000, 9100),
+                backends_dir: "./backends".to_string(),
+                backend_port_range: (9200, 9300),
                 file_cache: None,
             },
             auth: AuthConfig {
@@ -478,5 +518,15 @@ mod tests {
     #[test]
     fn test_default_adapter_port_range() {
         assert_eq!(default_adapter_port_range(), (9000, 9100));
+    }
+
+    #[test]
+    fn test_default_backends_dir() {
+        assert_eq!(default_backends_dir(), "./backends");
+    }
+
+    #[test]
+    fn test_default_backend_port_range() {
+        assert_eq!(default_backend_port_range(), (9200, 9300));
     }
 }
