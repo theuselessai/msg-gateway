@@ -144,13 +144,19 @@ impl GuardrailEngine {
     }
 
     pub fn evaluate_inbound(&self, message: &InboundMessage) -> GuardrailVerdict {
-        let json_val = match serde_json::to_value(message) {
+        let mut json_val = match serde_json::to_value(message) {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!(error = %e, "Failed to serialize InboundMessage for guardrail evaluation");
                 return GuardrailVerdict::Allow;
             }
         };
+        // Ensure fields omitted by skip_serializing_if are present as zero-values in CEL.
+        // `attachments` is omitted when empty (Vec::is_empty), causing "No such key" errors.
+        if let Some(obj) = json_val.as_object_mut() {
+            obj.entry("attachments")
+                .or_insert(serde_json::Value::Array(vec![]));
+        }
         let cel_val = json_to_cel_value(json_val);
 
         let mut ctx = Context::default();
