@@ -330,9 +330,13 @@ async fn drain_buffered_messages(state: &AppState, messages: Vec<InboundMessage>
         let config = state.config.read().await;
 
         // Resolve target for this message's credential
+        let gateway_ctx = crate::backend::GatewayContext {
+            gateway_url: format!("http://{}", config.gateway.listen),
+            send_token: config.auth.send_token.clone(),
+        };
         let adapter = if let Some(credential) = config.credentials.get(&message.credential_id) {
             let target = resolve_target(credential, &config.gateway.default_target);
-            match create_adapter(target) {
+            match create_adapter(target, Some(&gateway_ctx), credential.config.as_ref()) {
                 Ok(a) => a,
                 Err(e) => {
                     tracing::error!(
@@ -346,7 +350,7 @@ async fn drain_buffered_messages(state: &AppState, messages: Vec<InboundMessage>
             }
         } else {
             // Credential no longer exists, use default target
-            match create_adapter(&config.gateway.default_target) {
+            match create_adapter(&config.gateway.default_target, Some(&gateway_ctx), None) {
                 Ok(a) => a,
                 Err(e) => {
                     tracing::error!(
