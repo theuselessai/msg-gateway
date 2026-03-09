@@ -105,14 +105,13 @@ pub async fn watch_config(
                     }
                 }
 
-                {
+                let should_skip_reload = {
                     let skip_until = state.skip_reload_until.read().await;
-                    if let Some(until) = *skip_until
-                        && std::time::Instant::now() < until
-                    {
-                        tracing::debug!("Skipping reload (triggered by Admin API)");
-                        continue;
-                    }
+                    matches!(*skip_until, Some(until) if std::time::Instant::now() < until)
+                };
+                if should_skip_reload {
+                    tracing::debug!("Skipping reload (triggered by Admin API)");
+                    continue;
                 }
 
                 tracing::info!("Config file changed, reloading...");
@@ -187,12 +186,10 @@ pub async fn watch_config(
                 last_guardrail_reload = std::time::Instant::now();
 
                 if also_reload_config {
-                    let skip_until = state.skip_reload_until.read().await;
-                    let should_skip = skip_until
-                        .map(|until| std::time::Instant::now() < until)
-                        .unwrap_or(false);
-                    drop(skip_until);
-
+                    let should_skip = {
+                        let skip_until = state.skip_reload_until.read().await;
+                        matches!(*skip_until, Some(until) if std::time::Instant::now() < until)
+                    };
                     if should_skip {
                         tracing::debug!("Skipping config reload (triggered by Admin API)");
                     } else {
