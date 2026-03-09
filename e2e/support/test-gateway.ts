@@ -44,11 +44,7 @@ function buildConfig(
     gateway: {
       listen: `127.0.0.1:${gatewayPort}`,
       admin_token: 'test_admin_token',
-      default_target: {
-        protocol: 'pipelit',
-        inbound_url: backend.inboundUrl,
-        token: 'test_backend_token',
-      },
+      default_backend: 'pipelit',
       adapters_dir: extras?.adaptersDir ?? '../adapters',
       adapter_port_range: extras?.adapterPortRange ?? [19000, 19100],
       file_cache: {
@@ -64,6 +60,14 @@ function buildConfig(
           'application/pdf',
           'application/octet-stream',
         ],
+      },
+    },
+    backends: {
+      pipelit: {
+        protocol: 'pipelit',
+        inbound_url: backend.inboundUrl,
+        token: 'test_backend_token',
+        active: true,
       },
     },
     auth: {
