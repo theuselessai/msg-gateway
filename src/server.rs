@@ -641,14 +641,12 @@ async fn adapter_inbound(
         extra_data: payload.extra_data,
     };
 
-    if !state.guardrail_engine.read().await.is_empty() {
-        let engine = state.guardrail_engine.read().await;
-        match engine.evaluate_inbound(&inbound) {
-            GuardrailVerdict::Block { reject_message, .. } => {
-                return Err(AppError::Forbidden(reject_message));
-            }
-            GuardrailVerdict::Allow => {}
+    let engine = state.guardrail_engine.read().await;
+    match engine.evaluate_inbound(&inbound) {
+        GuardrailVerdict::Block { reject_message, .. } => {
+            return Err(AppError::Forbidden(reject_message));
         }
+        GuardrailVerdict::Allow => {}
     }
 
     // Check health state

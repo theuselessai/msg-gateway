@@ -687,7 +687,11 @@ mod tests {
         fs::write(dir.path().join("02_bad.json"), "not valid json {{{").unwrap();
 
         let rules = load_rules_from_dir(dir.path());
-        assert_eq!(rules.len(), 1, "malformed file should be skipped, valid rule kept");
+        assert_eq!(
+            rules.len(),
+            1,
+            "malformed file should be skipped, valid rule kept"
+        );
 
         let engine = GuardrailEngine::from_rules(rules);
         assert!(!engine.is_empty());

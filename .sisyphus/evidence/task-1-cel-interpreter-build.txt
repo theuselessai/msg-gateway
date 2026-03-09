@@ -1,0 +1,52 @@
+   Compiling msg-gateway v0.1.0 (/home/aka/programs/msg-gateway-cel-guardrails)
+warning: function `default_true` is never used
+  --> src/config.rs:55:4
+   |
+55 | fn default_true() -> bool {
+   |    ^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: enum `GuardrailType` is never used
+  --> src/config.rs:74:10
+   |
+74 | pub enum GuardrailType {
+   |          ^^^^^^^^^^^^^
+
+warning: enum `GuardrailAction` is never used
+  --> src/config.rs:85:10
+   |
+85 | pub enum GuardrailAction {
+   |          ^^^^^^^^^^^^^^^
+
+warning: enum `GuardrailDirection` is never used
+  --> src/config.rs:96:10
+   |
+96 | pub enum GuardrailDirection {
+   |          ^^^^^^^^^^^^^^^^^^
+
+warning: enum `GuardrailOnError` is never used
+   --> src/config.rs:109:10
+    |
+109 | pub enum GuardrailOnError {
+    |          ^^^^^^^^^^^^^^^^
+
+warning: struct `GuardrailRule` is never constructed
+   --> src/config.rs:119:12
+    |
+119 | pub struct GuardrailRule {
+    |            ^^^^^^^^^^^^^
+
+warning: variant `Forbidden` is never constructed
+  --> src/error.rs:38:5
+   |
+ 9 | pub enum AppError {
+   |          -------- variant in this enum
+...
+38 |     Forbidden(String),
+   |     ^^^^^^^^^
+   |
+   = note: `AppError` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: `msg-gateway` (bin "msg-gateway") generated 7 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 16.22s

@@ -1,7 +1,7 @@
 {
   "name": "audit-attachments",
   "type": "cel",
-  "expression": "size(message.files) > 0",
+  "expression": "size(message.attachments) > 0",
   "action": "log",
   "direction": "inbound",
   "on_error": "allow",
