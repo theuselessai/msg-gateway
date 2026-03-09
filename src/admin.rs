@@ -668,6 +668,8 @@ mod tests {
                 base_url: None,
                 token: "backend_token".to_string(),
                 poll_interval_ms: None,
+                adapter_dir: None,
+                port: None,
             }),
             route: serde_json::json!({"route": "data"}),
         };
