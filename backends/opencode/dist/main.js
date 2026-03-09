@@ -24,6 +24,8 @@ function log(msg) {
     process.stderr.write(`[${ts}] [${INSTANCE_ID}] ${msg}\n`);
 }
 function verifyBearer(header, token) {
+    if (!token)
+        return false;
     const expectedBuf = Buffer.from(`Bearer ${token}`);
     const headerBuf = Buffer.from(header);
     if (headerBuf.length !== expectedBuf.length)
@@ -164,9 +166,9 @@ app.post("/send", async (request, reply) => {
         return { error: "Unauthorized" };
     }
     const message = request.body;
-    if (!message?.source?.chat_id || !message?.source?.from || typeof message?.text !== "string") {
+    if (!message?.credential_id || !message?.source?.chat_id || !message?.source?.from || typeof message?.text !== "string") {
         reply.status(400);
-        return { error: "Invalid message: missing required fields (source.chat_id, source.from, text)" };
+        return { error: "Invalid message: missing required fields (credential_id, source.chat_id, source.from, text)" };
     }
     const chatId = message.source.chat_id;
     const who = message.source.from.display_name ??

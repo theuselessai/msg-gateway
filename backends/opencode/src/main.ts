@@ -32,6 +32,7 @@ function log(msg: string): void {
 }
 
 function verifyBearer(header: string, token: string): boolean {
+  if (!token) return false;
   const expectedBuf = Buffer.from(`Bearer ${token}`);
   const headerBuf = Buffer.from(header);
   if (headerBuf.length !== expectedBuf.length) return false;
@@ -246,9 +247,9 @@ app.post<{ Body: InboundMessage }>("/send", async (request, reply) => {
   }
 
   const message = request.body;
-  if (!message?.source?.chat_id || !message?.source?.from || typeof message?.text !== "string") {
+  if (!message?.credential_id || !message?.source?.chat_id || !message?.source?.from || typeof message?.text !== "string") {
     reply.status(400);
-    return { error: "Invalid message: missing required fields (source.chat_id, source.from, text)" };
+    return { error: "Invalid message: missing required fields (credential_id, source.chat_id, source.from, text)" };
   }
 
   const chatId = message.source.chat_id;
