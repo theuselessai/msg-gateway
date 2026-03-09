@@ -371,6 +371,7 @@ pub struct ExternalBackendManager {
     backends_dir: String,
     port_allocator: crate::adapter::PortAllocator,
     gateway_url: String,
+    gateway_send_token: String,
     processes: tokio::sync::RwLock<HashMap<String, ExternalBackendProcess>>,
 }
 
@@ -385,7 +386,12 @@ pub struct ExternalBackendProcess {
 
 #[allow(dead_code)]
 impl ExternalBackendManager {
-    pub fn new(backends_dir: String, port_range: (u16, u16), gateway_listen: &str) -> Self {
+    pub fn new(
+        backends_dir: String,
+        port_range: (u16, u16),
+        gateway_listen: &str,
+        gateway_send_token: String,
+    ) -> Self {
         let gateway_url = if gateway_listen.starts_with("0.0.0.0") {
             format!(
                 "http://127.0.0.1:{}",
@@ -399,6 +405,7 @@ impl ExternalBackendManager {
             backends_dir,
             port_allocator: crate::adapter::PortAllocator::new(port_range),
             gateway_url,
+            gateway_send_token,
             processes: tokio::sync::RwLock::new(HashMap::new()),
         }
     }
@@ -432,6 +439,7 @@ impl ExternalBackendManager {
             .env("BACKEND_PORT", port.to_string())
             .env("GATEWAY_URL", &self.gateway_url)
             .env("BACKEND_TOKEN", &backend_token)
+            .env("GATEWAY_SEND_TOKEN", &self.gateway_send_token)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());

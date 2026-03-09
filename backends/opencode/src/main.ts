@@ -4,6 +4,7 @@ const INSTANCE_ID = process.env.INSTANCE_ID ?? "unknown";
 const BACKEND_PORT = parseInt(process.env.BACKEND_PORT ?? "9200", 10);
 const GATEWAY_URL = process.env.GATEWAY_URL ?? "http://localhost:8080";
 const BACKEND_TOKEN = process.env.BACKEND_TOKEN ?? "";
+const GATEWAY_SEND_TOKEN = process.env.GATEWAY_SEND_TOKEN ?? "";
 
 interface BackendConfig {
   base_url: string;
@@ -200,7 +201,7 @@ async function relayToGateway(
     const resp = await fetch(`${GATEWAY_URL}/api/v1/send`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${BACKEND_TOKEN}`,
+        Authorization: `Bearer ${GATEWAY_SEND_TOKEN}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(relayBody),

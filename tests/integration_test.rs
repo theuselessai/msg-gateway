@@ -127,6 +127,7 @@ impl TestServer {
             config.gateway.backends_dir.clone(),
             config.gateway.backend_port_range,
             &config.gateway.listen,
+            config.auth.send_token.clone(),
         ));
 
         let (state, server_future) =
