@@ -13,13 +13,19 @@ pub struct Config {
     pub health_checks: HashMap<String, HealthCheckConfig>,
     #[serde(default)]
     pub credentials: HashMap<String, CredentialConfig>,
+    #[serde(default)]
+    pub backends: HashMap<String, BackendConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
     pub listen: String,
     pub admin_token: String,
-    pub default_target: TargetConfig,
+    /// TODO(T3–T6): Remove deprecated field once all modules use backends map + default_backend.
+    #[serde(default = "default_backend_config")]
+    pub default_target: BackendConfig,
+    #[serde(default)]
+    pub default_backend: Option<String>,
     /// Directory containing adapter definitions
     #[serde(default = "default_adapters_dir")]
     pub adapters_dir: String,
@@ -64,9 +70,9 @@ pub enum BackendProtocol {
     External,
 }
 
-/// Backend target configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TargetConfig {
+/// Backend configuration (renamed from TargetConfig)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BackendConfig {
     pub protocol: BackendProtocol,
     /// Inbound URL for Pipelit (POST destination)
     #[serde(default)]
@@ -85,6 +91,34 @@ pub struct TargetConfig {
     /// Port for pre-spawned external backend adapter
     #[serde(default)]
     pub port: Option<u16>,
+    /// Whether this backend is active (auto-spawned at startup for External protocol)
+    #[serde(default = "default_true")]
+    pub active: bool,
+    /// Opaque config blob passed as BACKEND_CONFIG env var to external subprocess
+    #[serde(default)]
+    pub config: Option<serde_json::Value>,
+}
+
+/// Temporary alias for backward compatibility.
+/// TODO(T3–T6): Remove once all modules are migrated from TargetConfig to BackendConfig.
+pub type TargetConfig = BackendConfig;
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_backend_config() -> BackendConfig {
+    BackendConfig {
+        protocol: BackendProtocol::Pipelit,
+        inbound_url: None,
+        base_url: None,
+        token: String::new(),
+        poll_interval_ms: None,
+        adapter_dir: None,
+        port: None,
+        active: true,
+        config: None,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,20 +150,18 @@ pub struct HealthCheckConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CredentialConfig {
-    /// Adapter name (must exist in adapters_dir, or "generic" for built-in)
     pub adapter: String,
-    /// Protocol auth token (passed to adapter via env var)
     pub token: String,
     pub active: bool,
     #[serde(default)]
     pub emergency: bool,
-    /// Adapter-specific configuration (passed to adapter as JSON)
     #[serde(default)]
     pub config: Option<serde_json::Value>,
-    /// Per-credential backend target override. If None, uses gateway.default_target
+    /// TODO(T3–T6): Remove deprecated field once all modules use `backend` name reference.
     #[serde(default)]
-    pub target: Option<TargetConfig>,
-    /// Opaque routing info passed to backend
+    pub target: Option<BackendConfig>,
+    #[serde(default)]
+    pub backend: Option<String>,
     pub route: serde_json::Value,
 }
 
@@ -228,7 +260,10 @@ mod tests {
             "gateway": {
                 "listen": "127.0.0.1:8080",
                 "admin_token": "${TEST_ADMIN_TOKEN}",
-                "default_target": {
+                "default_backend": "pipelit"
+            },
+            "backends": {
+                "pipelit": {
                     "protocol": "pipelit",
                     "inbound_url": "http://localhost:9000/inbound",
                     "token": "${TEST_BACKEND_TOKEN}"
@@ -245,7 +280,8 @@ mod tests {
         assert_eq!(config.gateway.listen, "127.0.0.1:8080");
         assert_eq!(config.gateway.admin_token, "admin123");
         assert_eq!(config.auth.send_token, "send456");
-        assert_eq!(config.gateway.default_target.token, "backend789");
+        assert_eq!(config.gateway.default_backend, Some("pipelit".to_string()));
+        assert_eq!(config.backends["pipelit"].token, "backend789");
     }
 
     #[test]
@@ -278,16 +314,10 @@ mod tests {
             std::env::set_var("TEST_TOKEN_DEFAULT", "token123");
         }
 
-        // Minimal config without optional fields
         let config_content = r#"{
             "gateway": {
                 "listen": "127.0.0.1:8080",
-                "admin_token": "${TEST_TOKEN_DEFAULT}",
-                "default_target": {
-                    "protocol": "pipelit",
-                    "inbound_url": "http://localhost:9000/inbound",
-                    "token": "${TEST_TOKEN_DEFAULT}"
-                }
+                "admin_token": "${TEST_TOKEN_DEFAULT}"
             },
             "auth": {
                 "send_token": "${TEST_TOKEN_DEFAULT}"
@@ -297,12 +327,13 @@ mod tests {
         std::fs::write(&config_path, config_content).unwrap();
 
         let config = load_config(&config_path).unwrap();
-        // Check defaults are applied
         assert_eq!(config.gateway.adapters_dir, "./adapters");
         assert_eq!(config.gateway.adapter_port_range, (9000, 9100));
         assert!(config.gateway.file_cache.is_none());
+        assert!(config.gateway.default_backend.is_none());
         assert!(config.credentials.is_empty());
         assert!(config.health_checks.is_empty());
+        assert!(config.backends.is_empty());
     }
 
     // ==================== Config Struct Tests ====================
@@ -335,8 +366,8 @@ mod tests {
     }
 
     #[test]
-    fn test_target_config_serialize() {
-        let target = TargetConfig {
+    fn test_backend_config_serialize() {
+        let backend = BackendConfig {
             protocol: BackendProtocol::Pipelit,
             inbound_url: Some("http://localhost:9000".to_string()),
             base_url: None,
@@ -344,15 +375,18 @@ mod tests {
             poll_interval_ms: None,
             adapter_dir: None,
             port: None,
+            active: true,
+            config: None,
         };
 
-        let json = serde_json::to_string(&target).unwrap();
+        let json = serde_json::to_string(&backend).unwrap();
         assert!(json.contains("\"protocol\":\"pipelit\""));
         assert!(json.contains("\"token\":\"test_token\""));
+        assert!(json.contains("\"active\":true"));
     }
 
     #[test]
-    fn test_target_config_opencode() {
+    fn test_backend_config_opencode() {
         let json = r#"{
             "protocol": "opencode",
             "base_url": "http://localhost:8000",
@@ -360,10 +394,12 @@ mod tests {
             "poll_interval_ms": 1000
         }"#;
 
-        let target: TargetConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(target.protocol, BackendProtocol::Opencode);
-        assert_eq!(target.base_url, Some("http://localhost:8000".to_string()));
-        assert_eq!(target.poll_interval_ms, Some(1000));
+        let backend: BackendConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(backend.protocol, BackendProtocol::Opencode);
+        assert_eq!(backend.base_url, Some("http://localhost:8000".to_string()));
+        assert_eq!(backend.poll_interval_ms, Some(1000));
+        assert!(backend.active);
+        assert!(backend.config.is_none());
     }
 
     #[test]
@@ -410,6 +446,7 @@ mod tests {
         assert!(cred.active);
         assert!(!cred.emergency);
         assert!(cred.config.is_none());
+        assert!(cred.backend.is_none());
         assert!(cred.target.is_none());
     }
 
@@ -421,11 +458,7 @@ mod tests {
             "active": true,
             "emergency": true,
             "config": {"webhook_url": "https://example.com"},
-            "target": {
-                "protocol": "opencode",
-                "base_url": "http://localhost:8000",
-                "token": "api_key"
-            },
+            "backend": "opencode",
             "route": {"user_id": 123}
         }"#;
 
@@ -433,7 +466,7 @@ mod tests {
         assert_eq!(cred.adapter, "telegram");
         assert!(cred.emergency);
         assert!(cred.config.is_some());
-        assert!(cred.target.is_some());
+        assert_eq!(cred.backend, Some("opencode".to_string()));
     }
 
     #[test]
@@ -451,15 +484,8 @@ mod tests {
         let gateway = GatewayConfig {
             listen: "0.0.0.0:8080".to_string(),
             admin_token: "admin123".to_string(),
-            default_target: TargetConfig {
-                protocol: BackendProtocol::Pipelit,
-                inbound_url: Some("http://localhost:9000".to_string()),
-                base_url: None,
-                token: "backend_token".to_string(),
-                poll_interval_ms: None,
-                adapter_dir: None,
-                port: None,
-            },
+            default_target: default_backend_config(),
+            default_backend: Some("opencode".to_string()),
             adapters_dir: "./adapters".to_string(),
             adapter_port_range: (9000, 9100),
             backends_dir: "./backends".to_string(),
@@ -469,25 +495,35 @@ mod tests {
 
         let json = serde_json::to_string(&gateway).unwrap();
         assert!(json.contains("\"listen\":\"0.0.0.0:8080\""));
+        assert!(json.contains("\"default_backend\":\"opencode\""));
         assert!(json.contains("\"adapter_port_range\":[9000,9100]"));
         assert!(json.contains("\"backend_port_range\":[9200,9300]"));
     }
 
     #[test]
     fn test_config_full_roundtrip() {
+        let mut backends = HashMap::new();
+        backends.insert(
+            "pipelit".to_string(),
+            BackendConfig {
+                protocol: BackendProtocol::Pipelit,
+                inbound_url: Some("http://localhost:9000".to_string()),
+                base_url: None,
+                token: "token".to_string(),
+                poll_interval_ms: None,
+                adapter_dir: None,
+                port: None,
+                active: true,
+                config: None,
+            },
+        );
+
         let config = Config {
             gateway: GatewayConfig {
                 listen: "127.0.0.1:8080".to_string(),
                 admin_token: "admin".to_string(),
-                default_target: TargetConfig {
-                    protocol: BackendProtocol::Pipelit,
-                    inbound_url: Some("http://localhost:9000".to_string()),
-                    base_url: None,
-                    token: "token".to_string(),
-                    poll_interval_ms: None,
-                    adapter_dir: None,
-                    port: None,
-                },
+                default_target: default_backend_config(),
+                default_backend: Some("pipelit".to_string()),
                 adapters_dir: "./adapters".to_string(),
                 adapter_port_range: (9000, 9100),
                 backends_dir: "./backends".to_string(),
@@ -499,6 +535,7 @@ mod tests {
             },
             health_checks: HashMap::new(),
             credentials: HashMap::new(),
+            backends,
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -506,6 +543,12 @@ mod tests {
 
         assert_eq!(parsed.gateway.listen, config.gateway.listen);
         assert_eq!(parsed.auth.send_token, config.auth.send_token);
+        assert_eq!(
+            parsed.gateway.default_backend,
+            config.gateway.default_backend
+        );
+        assert_eq!(parsed.backends.len(), 1);
+        assert!(parsed.backends.contains_key("pipelit"));
     }
 
     // ==================== Default Function Tests ====================
@@ -528,5 +571,93 @@ mod tests {
     #[test]
     fn test_default_backend_port_range() {
         assert_eq!(default_backend_port_range(), (9200, 9300));
+    }
+
+    // ==================== New Named-Backends Tests ====================
+
+    #[test]
+    fn test_backends_deserialization() {
+        let json = r#"{
+            "gateway": {
+                "listen": "127.0.0.1:8080",
+                "admin_token": "admin",
+                "default_backend": "opencode"
+            },
+            "backends": {
+                "opencode": {
+                    "protocol": "external",
+                    "adapter_dir": "./backends/opencode",
+                    "active": true,
+                    "token": "",
+                    "config": {"base_url": "http://127.0.0.1:4096"}
+                },
+                "pipelit": {
+                    "protocol": "pipelit",
+                    "inbound_url": "http://localhost:8000/api/v1/inbound",
+                    "token": "pipelit-token",
+                    "active": true
+                }
+            },
+            "auth": {
+                "send_token": "send-token"
+            }
+        }"#;
+
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.backends.len(), 2);
+
+        let opencode = &config.backends["opencode"];
+        assert_eq!(opencode.protocol, BackendProtocol::External);
+        assert_eq!(
+            opencode.adapter_dir,
+            Some("./backends/opencode".to_string())
+        );
+        assert!(opencode.active);
+        assert_eq!(opencode.token, "");
+        assert!(opencode.config.is_some());
+
+        let pipelit = &config.backends["pipelit"];
+        assert_eq!(pipelit.protocol, BackendProtocol::Pipelit);
+        assert_eq!(
+            pipelit.inbound_url,
+            Some("http://localhost:8000/api/v1/inbound".to_string())
+        );
+        assert!(pipelit.active);
+        assert_eq!(pipelit.token, "pipelit-token");
+        assert!(pipelit.config.is_none());
+    }
+
+    #[test]
+    fn test_credential_backend_field() {
+        let json = r#"{
+            "adapter": "telegram",
+            "token": "bot_token",
+            "active": true,
+            "backend": "opencode",
+            "route": {"channel": "telegram"}
+        }"#;
+
+        let cred: CredentialConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cred.backend, Some("opencode".to_string()));
+        assert_eq!(cred.adapter, "telegram");
+        assert!(cred.target.is_none());
+    }
+
+    #[test]
+    fn test_default_backend_deserialization() {
+        let json = r#"{
+            "gateway": {
+                "listen": "127.0.0.1:8080",
+                "admin_token": "admin",
+                "default_backend": "opencode"
+            },
+            "auth": {
+                "send_token": "token"
+            }
+        }"#;
+
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.gateway.default_backend, Some("opencode".to_string()));
+        assert!(config.backends.is_empty());
     }
 }

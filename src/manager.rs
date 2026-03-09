@@ -297,6 +297,7 @@ mod tests {
             emergency: false,
             config: None,
             target: None,
+            backend: None,
             route: serde_json::json!({"test": true}),
         }
     }
@@ -314,7 +315,10 @@ mod tests {
                     poll_interval_ms: None,
                     adapter_dir: None,
                     port: None,
+                    active: true,
+                    config: None,
                 },
+                default_backend: None,
                 adapters_dir: "./adapters".to_string(),
                 adapter_port_range: (9000, 9100),
                 backends_dir: "./backends".to_string(),
@@ -329,6 +333,7 @@ mod tests {
                 .into_iter()
                 .map(|(k, v)| (k.to_string(), v))
                 .collect(),
+            backends: HashMap::new(),
         }
     }
 

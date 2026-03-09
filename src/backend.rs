@@ -552,6 +552,8 @@ mod tests {
             poll_interval_ms: None,
             adapter_dir: None,
             port: None,
+            active: true,
+            config: None,
         }
     }
 
@@ -587,6 +589,8 @@ mod tests {
             poll_interval_ms: None,
             adapter_dir: None,
             port: None,
+            active: true,
+            config: None,
         };
 
         let result = PipelitAdapter::new(&target, None, None);
@@ -603,6 +607,8 @@ mod tests {
             poll_interval_ms: None,
             adapter_dir: None,
             port: None,
+            active: true,
+            config: None,
         };
 
         let adapter = PipelitAdapter::new(&target, None, None).unwrap();
@@ -619,6 +625,8 @@ mod tests {
             poll_interval_ms: None,
             adapter_dir: None,
             port: None,
+            active: true,
+            config: None,
         };
 
         let result = OpencodeAdapter::new(&target, None, None);
@@ -635,6 +643,8 @@ mod tests {
             poll_interval_ms: Some(1000),
             adapter_dir: None,
             port: None,
+            active: true,
+            config: None,
         };
 
         let adapter = OpencodeAdapter::new(&target, None, None).unwrap();
@@ -773,6 +783,8 @@ mod tests {
             poll_interval_ms: None,
             adapter_dir: Some("./backends/opencode".to_string()),
             port: None,
+            active: true,
+            config: None,
         };
 
         let result = create_adapter(&target, None, None);
@@ -797,6 +809,8 @@ mod tests {
             poll_interval_ms: None,
             adapter_dir: Some("./backends/opencode".to_string()),
             port: Some(9200),
+            active: true,
+            config: None,
         };
 
         let result = create_adapter(&target, None, None);

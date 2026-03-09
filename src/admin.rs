@@ -124,6 +124,7 @@ pub async fn create_credential(
         emergency: req.emergency,
         config: req.config,
         target: req.target,
+        backend: None,
         route: req.route,
     };
 
@@ -670,11 +671,12 @@ mod tests {
                 poll_interval_ms: None,
                 adapter_dir: None,
                 port: None,
+                active: true,
+                config: None,
             }),
             route: serde_json::json!({"route": "data"}),
         };
 
-        // Convert to CredentialConfig (as done in create_credential)
         let cred_config = CredentialConfig {
             adapter: req.adapter.clone(),
             token: req.token.clone(),
@@ -682,6 +684,7 @@ mod tests {
             emergency: req.emergency,
             config: req.config.clone(),
             target: req.target.clone(),
+            backend: None,
             route: req.route.clone(),
         };
 
@@ -703,6 +706,7 @@ mod tests {
             emergency: false,
             config: None,
             target: None,
+            backend: None,
             route: serde_json::json!({"old": "route"}),
         };
 
