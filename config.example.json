@@ -1,13 +1,33 @@
 {
   "gateway": {
-    "listen": "127.0.0.1:8080",
+    "listen": "0.0.0.0:8080",
     "admin_token": "${GATEWAY_ADMIN_TOKEN}",
+    "default_backend": "pipelit",
     "adapters_dir": "./adapters",
     "adapter_port_range": [9000, 9100],
-    "default_target": {
+    "backends_dir": "./backends",
+    "backend_port_range": [9200, 9300]
+  },
+  "backends": {
+    "pipelit": {
       "protocol": "pipelit",
       "inbound_url": "http://localhost:8000/api/v1/inbound",
-      "token": "${PIPELIT_API_TOKEN}"
+      "token": "${PIPELIT_API_TOKEN}",
+      "active": true
+    },
+    "opencode": {
+      "protocol": "external",
+      "adapter_dir": "./backends/opencode",
+      "token": "",
+      "active": true,
+      "config": {
+        "base_url": "http://127.0.0.1:4096",
+        "token": ":",
+        "model": {
+          "providerID": "anthropic",
+          "modelID": "claude-sonnet-4-5"
+        }
+      }
     }
   },
   "auth": {
@@ -24,6 +44,7 @@
   "credentials": {
     "generic_chat": {
       "adapter": "generic",
+      "backend": "pipelit",
       "token": "${GENERIC_CHAT_TOKEN}",
       "active": true,
       "emergency": false,
@@ -34,6 +55,7 @@
     },
     "yao_telegram": {
       "adapter": "telegram",
+      "backend": "pipelit",
       "token": "${YAO_TELEGRAM_TOKEN}",
       "active": false,
       "emergency": true,
@@ -47,15 +69,10 @@
     },
     "dev_opencode": {
       "adapter": "generic",
+      "backend": "opencode",
       "token": "${DEV_OPENCODE_TOKEN}",
       "active": false,
       "emergency": false,
-      "target": {
-        "protocol": "opencode",
-        "base_url": "http://localhost:4096",
-        "token": "${OPENCODE_TOKEN}",
-        "poll_interval_ms": 500
-      },
       "route": {
         "agent": "coder"
       }
