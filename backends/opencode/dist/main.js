@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const crypto_1 = require("crypto");
 const fastify_1 = __importDefault(require("fastify"));
 const INSTANCE_ID = process.env.INSTANCE_ID ?? "unknown";
 const BACKEND_PORT = parseInt(process.env.BACKEND_PORT ?? "9200", 10);
@@ -21,6 +22,12 @@ const backendConfig = (() => {
 function log(msg) {
     const ts = new Date().toISOString();
     process.stderr.write(`[${ts}] [${INSTANCE_ID}] ${msg}\n`);
+}
+function verifyBearer(header, token) {
+    const expected = `Bearer ${token}`;
+    if (header.length !== expected.length)
+        return false;
+    return (0, crypto_1.timingSafeEqual)(Buffer.from(header), Buffer.from(expected));
 }
 // Session management: {credential_id}:{chat_id} -> session_id
 const sessions = new Map();
@@ -71,6 +78,7 @@ async function getOrCreateSession(credentialId, chatId) {
         headers: {
             Authorization: basicAuthHeader(),
         },
+        signal: AbortSignal.timeout(30000),
     });
     if (!resp.ok) {
         const body = await resp.text();
@@ -78,10 +86,11 @@ async function getOrCreateSession(credentialId, chatId) {
     }
     const data = (await resp.json());
     const sessionId = data.id;
+    // FIFO eviction: Map iterates in insertion order, so first key is earliest inserted
     if (sessions.size >= MAX_SESSIONS) {
-        const oldestKey = sessions.keys().next().value;
-        if (oldestKey !== undefined)
-            sessions.delete(oldestKey);
+        const firstInsertedKey = sessions.keys().next().value;
+        if (firstInsertedKey !== undefined)
+            sessions.delete(firstInsertedKey);
     }
     sessions.set(sessionKey, sessionId);
     log(`Session created: ${sessionId} for ${sessionKey}`);
@@ -102,6 +111,7 @@ async function sendToOpenCode(message) {
             "Content-Type": "application/json",
         },
         body: JSON.stringify(msgBody),
+        signal: AbortSignal.timeout(60000),
     });
     if (!resp.ok) {
         const body = await resp.text();
@@ -134,6 +144,7 @@ async function relayToGateway(credentialId, chatId, text) {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify(relayBody),
+            signal: AbortSignal.timeout(15000),
         });
         if (!resp.ok) {
             const body = await resp.text();
@@ -147,7 +158,7 @@ app.get("/health", async () => {
 });
 app.post("/send", async (request, reply) => {
     const authHeader = request.headers.authorization;
-    if (!authHeader || authHeader !== `Bearer ${BACKEND_TOKEN}`) {
+    if (!authHeader || !verifyBearer(authHeader, BACKEND_TOKEN)) {
         reply.status(401);
         return { error: "Unauthorized" };
     }
@@ -210,8 +221,7 @@ async function main() {
         throw new Error("BACKEND_CONFIG must include 'model' with providerID and modelID");
     }
     if (!GATEWAY_SEND_TOKEN) {
-        log("FATAL: GATEWAY_SEND_TOKEN environment variable must be set");
-        process.exit(1);
+        throw new Error("GATEWAY_SEND_TOKEN environment variable must be set");
     }
     await app.listen({
         port: BACKEND_PORT,

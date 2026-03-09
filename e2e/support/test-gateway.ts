@@ -146,11 +146,7 @@ export class TestGateway {
       gateway: {
         listen: `127.0.0.1:${this._gatewayPort}`,
         admin_token: 'test_admin_token',
-        default_target: {
-          protocol: 'opencode',
-          base_url: `http://127.0.0.1:${opencodePort}`,
-          token: 'testuser:testpass',
-        },
+        default_backend: 'opencode',
         adapters_dir: '../adapters',
         adapter_port_range: this._adapterPortRange,
         file_cache: {
@@ -168,6 +164,14 @@ export class TestGateway {
           ],
         },
       },
+      backends: {
+        opencode: {
+          protocol: 'opencode',
+          base_url: `http://127.0.0.1:${opencodePort}`,
+          token: 'testuser:testpass',
+          active: true,
+        },
+      },
       auth: {
         send_token: 'test_send_token',
       },
@@ -175,15 +179,11 @@ export class TestGateway {
       credentials: {
         test_opencode: {
           adapter: 'generic',
+          backend: 'opencode',
           token: 'generic_token',
           active: true,
           emergency: false,
           route: { channel: 'test' },
-          target: {
-            protocol: 'opencode',
-            base_url: `http://127.0.0.1:${opencodePort}`,
-            token: 'testuser:testpass',
-          },
           config: {
             model: { providerID: 'test', modelID: 'test-model' },
           },

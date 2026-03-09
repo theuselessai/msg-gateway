@@ -674,7 +674,7 @@ mod tests {
     }
 
     #[test]
-    fn test_default_backend_deserialization() {
+    fn test_default_backend_field_serde() {
         let json = r#"{
             "gateway": {
                 "listen": "127.0.0.1:8080",

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "crypto";
 import Fastify from "fastify";
 
 const INSTANCE_ID = process.env.INSTANCE_ID ?? "unknown";
@@ -28,6 +29,12 @@ const backendConfig: BackendConfig = (() => {
 function log(msg: string): void {
   const ts = new Date().toISOString();
   process.stderr.write(`[${ts}] [${INSTANCE_ID}] ${msg}\n`);
+}
+
+function verifyBearer(header: string, token: string): boolean {
+  const expected = `Bearer ${token}`;
+  if (header.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(header), Buffer.from(expected));
 }
 
 interface UserInfo {
@@ -121,6 +128,7 @@ async function getOrCreateSession(
     headers: {
       Authorization: basicAuthHeader(),
     },
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!resp.ok) {
@@ -132,9 +140,10 @@ async function getOrCreateSession(
 
   const data = (await resp.json()) as { id: string };
   const sessionId = data.id;
+  // FIFO eviction: Map iterates in insertion order, so first key is earliest inserted
   if (sessions.size >= MAX_SESSIONS) {
-    const oldestKey = sessions.keys().next().value;
-    if (oldestKey !== undefined) sessions.delete(oldestKey);
+    const firstInsertedKey = sessions.keys().next().value;
+    if (firstInsertedKey !== undefined) sessions.delete(firstInsertedKey);
   }
   sessions.set(sessionKey, sessionId);
   log(`Session created: ${sessionId} for ${sessionKey}`);
@@ -163,6 +172,7 @@ async function sendToOpenCode(message: InboundMessage): Promise<string> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(msgBody),
+      signal: AbortSignal.timeout(60_000),
     },
   );
 
@@ -211,6 +221,7 @@ async function relayToGateway(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(relayBody),
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!resp.ok) {
@@ -228,7 +239,7 @@ app.get("/health", async () => {
 
 app.post<{ Body: InboundMessage }>("/send", async (request, reply) => {
   const authHeader = request.headers.authorization;
-  if (!authHeader || authHeader !== `Bearer ${BACKEND_TOKEN}`) {
+  if (!authHeader || !verifyBearer(authHeader, BACKEND_TOKEN)) {
     reply.status(401);
     return { error: "Unauthorized" };
   }
@@ -301,8 +312,7 @@ async function main(): Promise<void> {
     throw new Error("BACKEND_CONFIG must include 'model' with providerID and modelID");
   }
   if (!GATEWAY_SEND_TOKEN) {
-    log("FATAL: GATEWAY_SEND_TOKEN environment variable must be set");
-    process.exit(1);
+    throw new Error("GATEWAY_SEND_TOKEN environment variable must be set");
   }
 
   await app.listen({

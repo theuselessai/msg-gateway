@@ -18,11 +18,11 @@
     "opencode": {
       "protocol": "external",
       "adapter_dir": "./backends/opencode",
-      "token": "",
+      "token": "${OPENCODE_BACKEND_TOKEN}",
       "active": true,
       "config": {
         "base_url": "http://127.0.0.1:4096",
-        "token": ":",
+        "token": "${OPENCODE_API_TOKEN}",
         "model": {
           "providerID": "anthropic",
           "modelID": "claude-sonnet-4-5"
