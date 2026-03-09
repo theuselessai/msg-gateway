@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
 
@@ -252,6 +252,35 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, AppError> {
     }
 
     Ok(config)
+}
+
+/// Resolve config file path using XDG conventions.
+///
+/// Resolution order:
+/// 1. `GATEWAY_CONFIG` env var — returned as-is (backward compat, no existence check)
+/// 2. `$XDG_CONFIG_HOME/msg-gateway/config.json` — if file exists
+/// 3. `$HOME/.config/msg-gateway/config.json` — if file exists
+/// 4. `./config.json` — CWD fallback
+pub fn resolve_config_path() -> PathBuf {
+    if let Ok(path) = std::env::var("GATEWAY_CONFIG") {
+        return PathBuf::from(path);
+    }
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        let p = PathBuf::from(xdg).join("msg-gateway").join("config.json");
+        if p.exists() {
+            return p;
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let p = PathBuf::from(home)
+            .join(".config")
+            .join("msg-gateway")
+            .join("config.json");
+        if p.exists() {
+            return p;
+        }
+    }
+    PathBuf::from("config.json")
 }
 
 /// Resolve ${VAR} patterns to environment variable values
@@ -904,5 +933,108 @@ mod tests {
         let json = r#"{"name":"test","expression":"true","on_error":"invalid"}"#;
         let result: Result<GuardrailRule, _> = serde_json::from_str(json);
         assert!(result.is_err());
+    }
+
+    // ==================== resolve_config_path Tests ====================
+
+    #[test]
+    #[serial]
+    fn test_resolve_config_path_env_override() {
+        unsafe {
+            std::env::set_var("GATEWAY_CONFIG", "/tmp/custom.json");
+            std::env::remove_var("XDG_CONFIG_HOME");
+            std::env::remove_var("HOME");
+        }
+        let result = resolve_config_path();
+        unsafe {
+            std::env::remove_var("GATEWAY_CONFIG");
+        }
+        assert_eq!(result, PathBuf::from("/tmp/custom.json"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_config_path_xdg_config_home() {
+        let temp_dir = TempDir::new().unwrap();
+        let xdg_config = temp_dir.path().join("msg-gateway");
+        std::fs::create_dir_all(&xdg_config).unwrap();
+        let config_file = xdg_config.join("config.json");
+        std::fs::write(&config_file, "{}").unwrap();
+
+        unsafe {
+            std::env::remove_var("GATEWAY_CONFIG");
+            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+            std::env::remove_var("HOME");
+        }
+        let result = resolve_config_path();
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        assert_eq!(result, config_file);
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_config_path_home_config() {
+        let temp_dir = TempDir::new().unwrap();
+        let home_config = temp_dir.path().join(".config").join("msg-gateway");
+        std::fs::create_dir_all(&home_config).unwrap();
+        let config_file = home_config.join("config.json");
+        std::fs::write(&config_file, "{}").unwrap();
+
+        unsafe {
+            std::env::remove_var("GATEWAY_CONFIG");
+            std::env::remove_var("XDG_CONFIG_HOME");
+            std::env::set_var("HOME", temp_dir.path());
+        }
+        let result = resolve_config_path();
+        unsafe {
+            std::env::remove_var("HOME");
+        }
+        assert_eq!(result, config_file);
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_config_path_cwd_fallback() {
+        unsafe {
+            std::env::remove_var("GATEWAY_CONFIG");
+            std::env::remove_var("XDG_CONFIG_HOME");
+            std::env::remove_var("HOME");
+        }
+        let result = resolve_config_path();
+        assert_eq!(result, PathBuf::from("config.json"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_config_path_xdg_takes_precedence_over_home() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let xdg_config = temp_dir.path().join("xdg").join("msg-gateway");
+        std::fs::create_dir_all(&xdg_config).unwrap();
+        let xdg_file = xdg_config.join("config.json");
+        std::fs::write(&xdg_file, "{}").unwrap();
+
+        let home_config = temp_dir
+            .path()
+            .join("home")
+            .join(".config")
+            .join("msg-gateway");
+        std::fs::create_dir_all(&home_config).unwrap();
+        let home_file = home_config.join("config.json");
+        std::fs::write(&home_file, "{}").unwrap();
+
+        unsafe {
+            std::env::remove_var("GATEWAY_CONFIG");
+            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().join("xdg"));
+            std::env::set_var("HOME", temp_dir.path().join("home"));
+        }
+        let result = resolve_config_path();
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+            std::env::remove_var("HOME");
+        }
+        assert_eq!(result, xdg_file);
     }
 }
