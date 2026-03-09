@@ -111,12 +111,8 @@ impl BackendAdapter for PipelitAdapter {
 }
 
 pub struct OpencodeAdapter {
-    #[allow(dead_code)]
-    client: reqwest::Client,
     base_url: String,
     token: String,
-    #[allow(dead_code)]
-    poll_interval_ms: u64,
     gateway_url: String,
     send_token: String,
     credential_config: Option<serde_json::Value>,
@@ -134,10 +130,8 @@ impl OpencodeAdapter {
         })?;
 
         Ok(Self {
-            client: reqwest::Client::new(),
             base_url,
             token: target.token.clone(),
-            poll_interval_ms: target.poll_interval_ms.unwrap_or(500),
             gateway_url: gateway_ctx
                 .map(|ctx| ctx.gateway_url.clone())
                 .unwrap_or_default(),
@@ -174,7 +168,7 @@ impl BackendAdapter for OpencodeAdapter {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()
-            .unwrap_or_default();
+            .expect("Failed to build HTTP client with timeout");
 
         let chat_id = &message.source.chat_id;
 
