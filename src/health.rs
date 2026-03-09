@@ -322,25 +322,41 @@ async fn send_recovery_notification(state: &AppState, config: &HealthCheckConfig
     }
 }
 
-/// Drain buffered messages to the target server
 async fn drain_buffered_messages(state: &AppState, messages: Vec<InboundMessage>) {
-    use crate::backend::{create_adapter, resolve_target};
+    use crate::backend::{create_adapter, resolve_backend_name};
 
-    // Hoist invariants outside the loop
     let config = state.config.read().await;
     let gateway_ctx = crate::backend::GatewayContext {
         gateway_url: format!("http://{}", config.gateway.listen),
         send_token: config.auth.send_token.clone(),
     };
-    let default_target = config.gateway.default_target.clone();
     drop(config);
 
     for message in messages {
-        // Per-message: only acquire lock for credential lookup
         let config = state.config.read().await;
         let adapter = if let Some(credential) = config.credentials.get(&message.credential_id) {
-            let target = resolve_target(credential, &default_target);
-            match create_adapter(target, Some(&gateway_ctx), credential.config.as_ref()) {
+            let backend_name = match resolve_backend_name(credential, &config.gateway) {
+                Some(name) => name,
+                None => {
+                    tracing::error!(
+                        credential_id = %message.credential_id,
+                        "No backend configured for buffered message credential"
+                    );
+                    continue;
+                }
+            };
+            let backend_cfg = match config.backends.get(&backend_name) {
+                Some(cfg) => cfg,
+                None => {
+                    tracing::error!(
+                        credential_id = %message.credential_id,
+                        backend = %backend_name,
+                        "Backend not found for buffered message"
+                    );
+                    continue;
+                }
+            };
+            match create_adapter(backend_cfg, Some(&gateway_ctx), None) {
                 Ok(a) => a,
                 Err(e) => {
                     tracing::error!(
@@ -353,18 +369,11 @@ async fn drain_buffered_messages(state: &AppState, messages: Vec<InboundMessage>
                 }
             }
         } else {
-            // Credential no longer exists, use default target
-            match create_adapter(&default_target, Some(&gateway_ctx), None) {
-                Ok(a) => a,
-                Err(e) => {
-                    tracing::error!(
-                        message_id = %message.source.message_id,
-                        error = %e,
-                        "Failed to create default backend adapter"
-                    );
-                    continue;
-                }
-            }
+            tracing::warn!(
+                credential_id = %message.credential_id,
+                "Credential no longer exists, dropping buffered message"
+            );
+            continue;
         };
         drop(config);
 

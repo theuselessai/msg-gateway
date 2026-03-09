@@ -21,9 +21,6 @@ pub struct Config {
 pub struct GatewayConfig {
     pub listen: String,
     pub admin_token: String,
-    /// TODO(T3–T6): Remove deprecated field once all modules use backends map + default_backend.
-    #[serde(default = "default_backend_config")]
-    pub default_target: BackendConfig,
     #[serde(default)]
     pub default_backend: Option<String>,
     /// Directory containing adapter definitions
@@ -70,7 +67,7 @@ pub enum BackendProtocol {
     External,
 }
 
-/// Backend configuration (renamed from TargetConfig)
+/// Backend configuration
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BackendConfig {
     pub protocol: BackendProtocol,
@@ -99,26 +96,8 @@ pub struct BackendConfig {
     pub config: Option<serde_json::Value>,
 }
 
-/// Temporary alias for backward compatibility.
-/// TODO(T3–T6): Remove once all modules are migrated from TargetConfig to BackendConfig.
-pub type TargetConfig = BackendConfig;
-
 fn default_true() -> bool {
     true
-}
-
-fn default_backend_config() -> BackendConfig {
-    BackendConfig {
-        protocol: BackendProtocol::Pipelit,
-        inbound_url: None,
-        base_url: None,
-        token: String::new(),
-        poll_interval_ms: None,
-        adapter_dir: None,
-        port: None,
-        active: true,
-        config: None,
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,9 +136,6 @@ pub struct CredentialConfig {
     pub emergency: bool,
     #[serde(default)]
     pub config: Option<serde_json::Value>,
-    /// TODO(T3–T6): Remove deprecated field once all modules use `backend` name reference.
-    #[serde(default)]
-    pub target: Option<BackendConfig>,
     #[serde(default)]
     pub backend: Option<String>,
     pub route: serde_json::Value,
@@ -447,7 +423,6 @@ mod tests {
         assert!(!cred.emergency);
         assert!(cred.config.is_none());
         assert!(cred.backend.is_none());
-        assert!(cred.target.is_none());
     }
 
     #[test]
@@ -484,7 +459,6 @@ mod tests {
         let gateway = GatewayConfig {
             listen: "0.0.0.0:8080".to_string(),
             admin_token: "admin123".to_string(),
-            default_target: default_backend_config(),
             default_backend: Some("opencode".to_string()),
             adapters_dir: "./adapters".to_string(),
             adapter_port_range: (9000, 9100),
@@ -522,7 +496,6 @@ mod tests {
             gateway: GatewayConfig {
                 listen: "127.0.0.1:8080".to_string(),
                 admin_token: "admin".to_string(),
-                default_target: default_backend_config(),
                 default_backend: Some("pipelit".to_string()),
                 adapters_dir: "./adapters".to_string(),
                 adapter_port_range: (9000, 9100),
@@ -640,7 +613,6 @@ mod tests {
         let cred: CredentialConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cred.backend, Some("opencode".to_string()));
         assert_eq!(cred.adapter, "telegram");
-        assert!(cred.target.is_none());
     }
 
     #[test]
