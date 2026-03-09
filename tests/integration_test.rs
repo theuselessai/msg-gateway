@@ -1568,6 +1568,87 @@ async fn test_opencode_backend_session_reuse() {
     assert_eq!(message_count, 2, "Should send 2 messages");
 }
 
+/// Verify that different credentials with the same chat_id create separate OpenCode sessions
+#[tokio::test]
+async fn test_opencode_backend_session_isolation() {
+    let (oc_port, captured, _oc_handle) = spawn_mock_opencode(false).await;
+    let gw_port = find_available_port().await;
+
+    // Create config with two credentials pointing to same OpenCode backend
+    let mut config = test_config_with_opencode_backend(gw_port, oc_port);
+    config.credentials.insert(
+        "test_opencode_beta".to_string(),
+        CredentialConfig {
+            adapter: "generic".to_string(),
+            token: "generic_token_beta".to_string(),
+            active: true,
+            emergency: false,
+            route: serde_json::json!({"channel": "test_opencode_beta"}),
+            config: Some(serde_json::json!({
+                "model": {
+                    "providerID": "test",
+                    "modelID": "test-model"
+                }
+            })),
+            target: Some(TargetConfig {
+                protocol: BackendProtocol::Opencode,
+                inbound_url: None,
+                base_url: Some(format!("http://127.0.0.1:{}", oc_port)),
+                token: "testuser:testpass".to_string(),
+                poll_interval_ms: None,
+            }),
+        },
+    );
+
+    let server = TestServer::new(config).await;
+    let client = server.client();
+
+    // Send message from credential alpha
+    let resp = client
+        .post(server.url("/api/v1/chat/test_opencode"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "Message from alpha",
+            "chat_id": "iso-shared-chat",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    // Wait for first request to complete
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Send message from credential beta (same chat_id)
+    let resp = client
+        .post(server.url("/api/v1/chat/test_opencode_beta"))
+        .header("Authorization", "Bearer generic_token_beta")
+        .json(&serde_json::json!({
+            "text": "Message from beta",
+            "chat_id": "iso-shared-chat",
+            "from": {"id": "user2"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    // Wait for second request to complete
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Verify: 2 session creations (one per credential), 2 message sends
+    let reqs = captured.lock().unwrap();
+    let session_count = reqs.iter().filter(|r| r.path == "/session").count();
+    let message_count = reqs.iter().filter(|r| r.path.contains("/message")).count();
+
+    assert_eq!(
+        session_count, 2,
+        "Should create separate sessions for different credentials"
+    );
+    assert_eq!(message_count, 2, "Should send 2 messages");
+}
+
 /// Verify Authorization header sent to mock is Basic auth with base64("testuser:testpass")
 #[tokio::test]
 async fn test_opencode_backend_auth_basic() {

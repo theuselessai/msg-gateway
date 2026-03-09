@@ -171,10 +171,11 @@ impl BackendAdapter for OpencodeAdapter {
             .expect("Failed to build HTTP client with timeout");
 
         let chat_id = &message.source.chat_id;
+        let session_key = format!("{}:{}", message.credential_id, chat_id);
 
         let session_id = {
             let mut sessions = self.sessions.lock().await;
-            if let Some(id) = sessions.get(chat_id) {
+            if let Some(id) = sessions.get(&session_key) {
                 id.clone()
             } else {
                 tracing::info!(
@@ -212,7 +213,7 @@ impl BackendAdapter for OpencodeAdapter {
                     })?
                     .to_string();
 
-                sessions.insert(chat_id.clone(), new_session_id.clone());
+                sessions.insert(session_key.clone(), new_session_id.clone());
                 new_session_id
             }
         };
