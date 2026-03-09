@@ -435,8 +435,8 @@ impl ExternalBackendManager {
             .env("GATEWAY_URL", &self.gateway_url)
             .env("BACKEND_TOKEN", &backend_token)
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
 
         if let Some(cfg) = config {
             cmd.env(

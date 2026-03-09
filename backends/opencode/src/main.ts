@@ -84,6 +84,9 @@ async function retry<T>(
 
 function parseAuth(): { username: string; password: string } {
   const token = backendConfig.token ?? "";
+  if (!token) {
+    throw new Error("BACKEND_CONFIG must include non-empty 'token'");
+  }
   const colonPos = token.indexOf(":");
   if (colonPos === -1) {
     return { username: token, password: "" };
@@ -274,6 +277,9 @@ async function main(): Promise<void> {
 
   if (!backendConfig.base_url) {
     throw new Error("BACKEND_CONFIG must include 'base_url'");
+  }
+  if (!backendConfig.model) {
+    throw new Error("BACKEND_CONFIG must include 'model' with providerID and modelID");
   }
 
   await app.listen({
