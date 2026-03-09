@@ -139,17 +139,12 @@ async function sendToOpenCode(message: InboundMessage): Promise<string> {
   const chatId = message.source.chat_id;
   const sessionId = await getOrCreateSession(message.credential_id, chatId);
 
-  const model = backendConfig.model;
-  if (!model) {
-    throw new Error("Missing 'model' in BACKEND_CONFIG");
-  }
-
   log(
     `Sending message to OpenCode session=${sessionId} chat=${chatId}`,
   );
 
   const msgBody = {
-    model,
+    model: backendConfig.model,
     parts: [{ type: "text", text: message.text }],
   };
 
@@ -167,6 +162,12 @@ async function sendToOpenCode(message: InboundMessage): Promise<string> {
 
   if (!resp.ok) {
     const body = await resp.text();
+    // Invalidate stale session on auth/not-found errors so next request recreates it
+    if (resp.status === 401 || resp.status === 403 || resp.status === 404) {
+      const sessionKey = `${message.credential_id}:${chatId}`;
+      sessions.delete(sessionKey);
+      log(`Invalidated stale session for ${sessionKey} (HTTP ${resp.status})`);
+    }
     throw new Error(
       `OpenCode message failed: ${resp.status} ${body}`,
     );
