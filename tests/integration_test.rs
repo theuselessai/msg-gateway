@@ -3,6 +3,7 @@
 //! These tests spawn a real gateway server and mock backend to test the full flow.
 
 use msg_gateway::adapter::AdapterInstanceManager;
+use msg_gateway::backend::ExternalBackendManager;
 use msg_gateway::config::{
     AuthConfig, BackendProtocol, Config, CredentialConfig, FileCacheConfig, GatewayConfig,
     TargetConfig,
@@ -113,9 +114,14 @@ impl TestServer {
             )
             .unwrap(),
         );
+        let backend_manager = Arc::new(ExternalBackendManager::new(
+            config.gateway.backends_dir.clone(),
+            config.gateway.backend_port_range,
+            &config.gateway.listen,
+        ));
 
         let (state, server_future) =
-            msg_gateway::server::create_server(config, manager, adapter_manager)
+            msg_gateway::server::create_server(config, manager, adapter_manager, backend_manager)
                 .await
                 .unwrap();
 

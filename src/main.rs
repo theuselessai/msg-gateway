@@ -16,6 +16,8 @@ use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::adapter::AdapterInstanceManager;
+use crate::backend::ExternalBackendManager;
+use crate::config::BackendProtocol;
 use crate::manager::CredentialManager;
 
 #[tokio::main]
@@ -49,14 +51,27 @@ async fn main() -> anyhow::Result<()> {
         "Adapter manager initialized"
     );
 
+    // Create backend manager for external backend adapter subprocesses
+    let backend_manager = Arc::new(ExternalBackendManager::new(
+        config.gateway.backends_dir.clone(),
+        config.gateway.backend_port_range,
+        &config.gateway.listen,
+    ));
+
     // Create credential manager
     let manager = Arc::new(CredentialManager::new());
 
     // Start HTTP server (before spawning adapters, so they can connect)
     let manager_clone = manager.clone();
     let adapter_manager_clone = adapter_manager.clone();
-    let (state, server_future) =
-        server::create_server(config.clone(), manager_clone, adapter_manager_clone).await?;
+    let backend_manager_clone = backend_manager.clone();
+    let (state, server_future) = server::create_server(
+        config.clone(),
+        manager_clone,
+        adapter_manager_clone,
+        backend_manager_clone,
+    )
+    .await?;
 
     // Start adapter instances for all active credentials
     for (credential_id, cred_config) in &config.credentials {
@@ -121,6 +136,54 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Start external backend adapter if default target uses external protocol
+    if config.gateway.default_target.protocol == BackendProtocol::External {
+        let adapter_dir = config.gateway.default_target.adapter_dir.as_deref();
+
+        let backend_config = config
+            .credentials
+            .values()
+            .find(|c| c.active)
+            .and_then(|c| c.config.as_ref());
+
+        match backend_manager
+            .spawn(
+                "__default_backend__",
+                adapter_dir,
+                "opencode",
+                &config.gateway.default_target.token,
+                backend_config,
+            )
+            .await
+        {
+            Ok((port, token)) => {
+                tracing::info!(port = %port, "External backend adapter spawned");
+
+                let ready = backend::wait_for_backend_ready(
+                    port,
+                    Duration::from_secs(30),
+                    Duration::from_millis(500),
+                )
+                .await;
+
+                if ready {
+                    tracing::info!("External backend adapter is ready");
+                } else {
+                    tracing::warn!("External backend adapter did not become ready within timeout");
+                }
+
+                {
+                    let mut cfg = state.config.write().await;
+                    cfg.gateway.default_target.port = Some(port);
+                    cfg.gateway.default_target.token = token;
+                }
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to spawn external backend adapter");
+            }
+        }
+    }
+
     // Start adapter health monitor in background (check every 30s, max 3 failures)
     {
         let adapter_manager_for_health = adapter_manager.clone();
@@ -170,6 +233,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Graceful shutdown
     tracing::info!("Shutting down...");
+    backend_manager.stop_all().await;
     adapter_manager.stop_all().await;
     manager.shutdown().await;
 

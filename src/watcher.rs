@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::adapter::AdapterInstanceManager;
-use crate::config::{self, CredentialConfig};
+use crate::config::{self, BackendProtocol, CredentialConfig};
 use crate::manager::CredentialManager;
 use crate::server::AppState;
 
@@ -98,6 +98,7 @@ pub async fn watch_config(
 
                 // Sync adapter instances with new config
                 sync_adapters(&old_config, &new_config, &manager, &adapter_manager).await;
+                sync_backend(&old_config, &new_config, &state).await;
 
                 tracing::info!("Config reloaded successfully");
                 last_reload = std::time::Instant::now();
@@ -234,6 +235,73 @@ async fn spawn_adapter(
 /// Check if credential config has changed in a way that requires instance restart
 fn credential_changed(old: &CredentialConfig, new: &CredentialConfig) -> bool {
     old.adapter != new.adapter || old.token != new.token || old.config != new.config
+}
+
+async fn sync_backend(
+    old_config: &config::Config,
+    new_config: &config::Config,
+    state: &Arc<AppState>,
+) {
+    let old_target = &old_config.gateway.default_target;
+    let new_target = &new_config.gateway.default_target;
+
+    if old_target == new_target {
+        return;
+    }
+
+    tracing::info!("Backend target config changed, resyncing...");
+
+    let backend_manager = &state.backend_manager;
+
+    if old_target.protocol == BackendProtocol::External {
+        backend_manager.stop("__default_backend__").await;
+    }
+
+    if new_target.protocol == BackendProtocol::External {
+        let adapter_dir = new_target.adapter_dir.as_deref();
+        let backend_config = new_config
+            .credentials
+            .values()
+            .find(|c| c.active)
+            .and_then(|c| c.config.as_ref());
+
+        match backend_manager
+            .spawn(
+                "__default_backend__",
+                adapter_dir,
+                "opencode",
+                &new_target.token,
+                backend_config,
+            )
+            .await
+        {
+            Ok((port, token)) => {
+                tracing::info!(port = %port, "External backend adapter respawned");
+
+                let ready = crate::backend::wait_for_backend_ready(
+                    port,
+                    std::time::Duration::from_secs(30),
+                    std::time::Duration::from_millis(500),
+                )
+                .await;
+
+                if ready {
+                    tracing::info!("External backend adapter is ready");
+                } else {
+                    tracing::warn!("External backend adapter did not become ready within timeout");
+                }
+
+                {
+                    let mut cfg = state.config.write().await;
+                    cfg.gateway.default_target.port = Some(port);
+                    cfg.gateway.default_target.token = token;
+                }
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to respawn external backend adapter");
+            }
+        }
+    }
 }
 
 #[cfg(test)]
