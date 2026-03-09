@@ -37,11 +37,11 @@ async fn main() -> anyhow::Result<()> {
     // Load config
     let config_path = config::resolve_config_path();
 
-    let config = config::load_config(
-        config_path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Config path contains invalid UTF-8"))?,
-    )?;
+    let config_path_str = config_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Config path contains invalid UTF-8"))?;
+
+    let config = config::load_config(config_path_str)?;
     tracing::info!(listen = %config.gateway.listen, "Configuration loaded");
 
     // Create adapter instance manager
@@ -200,10 +200,7 @@ async fn main() -> anyhow::Result<()> {
     let watcher_state = state.clone();
     let watcher_manager = manager.clone();
     let watcher_adapter_manager = adapter_manager.clone();
-    let watcher_path = config_path
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("Config path contains invalid UTF-8"))?
-        .to_string();
+    let watcher_path = config_path_str.to_string();
     let watcher_guardrails_dir = config.gateway.guardrails_dir.clone();
     tokio::spawn(async move {
         if let Err(e) = watcher::watch_config(
