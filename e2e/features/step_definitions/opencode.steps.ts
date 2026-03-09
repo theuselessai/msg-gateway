@@ -78,6 +78,10 @@ Then('the WebSocket client should receive the OpenCode AI response', async funct
 
 Then('the OpenCode mock should have created exactly {int} session', async function (this: TestWorld, count: number) {
   if (!this.mockOpencodeServer) throw new Error('MockOpencodeServer not initialized');
+  const deadline = Date.now() + 10000;
+  while (this.mockOpencodeServer.getSessionRequests().length < count && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
   expect(this.mockOpencodeServer.getSessionRequests()).to.have.length(count);
 });
 

@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 
 use crate::config::{BackendProtocol, CredentialConfig, TargetConfig};
 use crate::message::InboundMessage;
@@ -17,12 +17,14 @@ pub struct GatewayContext {
     pub send_token: String,
 }
 
-/// Shared session map for OpenCode adapters (persists across per-request adapter creation)
-static OPENCODE_SESSIONS: OnceLock<Arc<RwLock<HashMap<String, String>>>> = OnceLock::new();
+/// Shared session map for OpenCode adapters (persists across per-request adapter creation).
+/// Uses a Mutex (not RwLock) so that session creation is serialized per-process,
+/// preventing duplicate session creation under concurrent requests for the same chat_id.
+static OPENCODE_SESSIONS: OnceLock<Arc<Mutex<HashMap<String, String>>>> = OnceLock::new();
 
-fn get_opencode_sessions() -> Arc<RwLock<HashMap<String, String>>> {
+fn get_opencode_sessions() -> Arc<Mutex<HashMap<String, String>>> {
     OPENCODE_SESSIONS
-        .get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
+        .get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
         .clone()
 }
 
@@ -118,7 +120,7 @@ pub struct OpencodeAdapter {
     gateway_url: String,
     send_token: String,
     credential_config: Option<serde_json::Value>,
-    sessions: Arc<RwLock<HashMap<String, String>>>,
+    sessions: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl OpencodeAdapter {
@@ -177,13 +179,10 @@ impl BackendAdapter for OpencodeAdapter {
         let chat_id = &message.source.chat_id;
 
         let session_id = {
-            let sessions = self.sessions.read().await;
-            sessions.get(chat_id).cloned()
-        };
-
-        let session_id = match session_id {
-            Some(id) => id,
-            None => {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(id) = sessions.get(chat_id) {
+                id.clone()
+            } else {
                 tracing::info!(
                     credential_id = %message.credential_id,
                     chat_id = %chat_id,
@@ -219,14 +218,8 @@ impl BackendAdapter for OpencodeAdapter {
                     })?
                     .to_string();
 
-                // Write lock with double-check (race condition protection)
-                let mut sessions = self.sessions.write().await;
-                if let Some(existing) = sessions.get(chat_id) {
-                    existing.clone()
-                } else {
-                    sessions.insert(chat_id.clone(), new_session_id.clone());
-                    new_session_id
-                }
+                sessions.insert(chat_id.clone(), new_session_id.clone());
+                new_session_id
             }
         };
 
