@@ -359,6 +359,32 @@ External adapters communicate with the gateway via:
 | Pipelit | Webhook + callback | `POST {inbound_url}` with `InboundMessage` | `POST /api/v1/send` from backend |
 | OpenCode | REST + SSE | `POST {base_url}/conversation` | SSE polling for responses |
 
+### Backend Scaling Model
+
+Backends use a **singleton-per-name** model: one subprocess per named backend entry in `config.backends`, shared across all credentials that reference it.
+
+```
+config.backends:
+  opencode  →  ONE Node.js process (port 9200)
+  pipelit   →  ONE Node.js process (port 9201)
+
+Credentials:
+  telegram  (backend: opencode)  ──┐
+  slack     (backend: opencode)  ──┼──▶  opencode process handles all
+  discord   (backend: opencode)  ──┘     via internal session map (credential:chat → sessionId)
+
+  webhook1  (backend: pipelit)   ──▶  pipelit process handles all
+```
+
+**Constraint:** this model only works when all credentials sharing a backend name talk to the **same upstream instance** (same base URL, same auth token). If credentials need to reach different upstream endpoints or isolated accounts, a single shared process cannot serve them all correctly.
+
+**When this breaks down (future work):**
+- Multi-tenant deployments where each user has their own OpenCode server
+- Per-credential Pipelit workspace tokens pointing to different endpoints
+- Any scenario where backend config differs per credential, not per backend name
+
+**Future direction:** model backends like adapters — one subprocess per credential, with `CREDENTIAL_CONFIG` carrying the per-credential endpoint/token. See roadmap.
+
 ## Security
 
 - Admin API requires `admin_token` in Authorization header
