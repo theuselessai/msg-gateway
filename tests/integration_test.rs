@@ -1890,3 +1890,314 @@ async fn test_guardrail_blocks_generic_chat_inbound() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert!(body["error"].as_str().unwrap().contains("blocked"));
 }
+
+/// (a) POST inbound via /api/v1/adapter/inbound with block rule + matching text → HTTP 403
+#[tokio::test]
+async fn test_guardrail_blocks_adapter_inbound_endpoint() {
+    let guardrails_dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        guardrails_dir.path().join("01-block.json"),
+        r#"{"name":"block-adapter","expression":"message.text.contains(\"blocked\")","action":"block","reject_message":"Blocked via adapter endpoint"}"#,
+    )
+    .unwrap();
+
+    let adapters_dir = tempfile::TempDir::new().unwrap();
+    let test_adapter_dir = adapters_dir.path().join("test_adapter");
+    std::fs::create_dir(&test_adapter_dir).unwrap();
+    std::fs::write(
+        test_adapter_dir.join("adapter.json"),
+        r#"{"name":"test_adapter","version":"1.0","command":"sleep","args":["60"]}"#,
+    )
+    .unwrap();
+
+    let port = find_available_port().await;
+    let mut config = test_config(port);
+    config.gateway.guardrails_dir = Some(guardrails_dir.path().to_string_lossy().into_owned());
+    config.gateway.adapters_dir = adapters_dir.path().to_string_lossy().into_owned();
+    config.credentials.insert(
+        "test_external".to_string(),
+        CredentialConfig {
+            adapter: "test_adapter".to_string(),
+            token: "ext_token".to_string(),
+            active: true,
+            emergency: false,
+            route: serde_json::json!({"channel": "external"}),
+            config: None,
+            backend: None,
+        },
+    );
+
+    let server = TestServer::new(config).await;
+
+    let (instance_id, _) = server
+        .state
+        .adapter_manager
+        .spawn("test_external", "test_adapter", "ext_token", None)
+        .await
+        .unwrap();
+
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/adapter/inbound"))
+        .json(&serde_json::json!({
+            "instance_id": instance_id,
+            "chat_id": "adapter-chat",
+            "message_id": "msg-1",
+            "text": "This message is blocked by rule",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "Blocked via adapter endpoint");
+
+    let _ = server.state.adapter_manager.stop("test_external").await;
+}
+
+/// (b) POST inbound via generic chat endpoint with block rule → HTTP 403 + reject_message body
+#[tokio::test]
+async fn test_guardrail_blocks_generic_chat_with_custom_reject_message() {
+    let guardrails_dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        guardrails_dir.path().join("01-block.json"),
+        r#"{"name":"custom-reject","expression":"message.text.contains(\"forbidden\")","action":"block","reject_message":"Custom rejection: content policy violation"}"#,
+    )
+    .unwrap();
+
+    let port = find_available_port().await;
+    let mut config = test_config(port);
+    config.gateway.guardrails_dir = Some(guardrails_dir.path().to_string_lossy().into_owned());
+
+    let server = TestServer::new(config).await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "This contains forbidden content",
+            "chat_id": "reject-test",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "Custom rejection: content policy violation");
+}
+
+/// (c) Allowed when no rule matches the message → HTTP 202
+#[tokio::test]
+async fn test_guardrail_allows_when_expression_does_not_match() {
+    let guardrails_dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        guardrails_dir.path().join("01-block.json"),
+        r#"{"name":"block-secret","expression":"message.text.contains(\"secret_keyword\")","action":"block","reject_message":"Blocked"}"#,
+    )
+    .unwrap();
+
+    let port = find_available_port().await;
+    let mut config = test_config(port);
+    config.gateway.guardrails_dir = Some(guardrails_dir.path().to_string_lossy().into_owned());
+
+    let server = TestServer::new(config).await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "This is a perfectly normal message with no matches",
+            "chat_id": "allow-test",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 202);
+}
+
+/// (d) Multiple rules with short-circuit: first block rule stops evaluation
+#[tokio::test]
+async fn test_guardrail_short_circuits_on_first_matching_block_rule() {
+    let guardrails_dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        guardrails_dir.path().join("01-first-rule.json"),
+        r#"{"name":"first-rule","expression":"message.text.contains(\"badword\")","action":"block","reject_message":"Blocked by FIRST rule"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        guardrails_dir.path().join("02-second-rule.json"),
+        r#"{"name":"second-rule","expression":"message.text.contains(\"badword\")","action":"block","reject_message":"Blocked by SECOND rule"}"#,
+    )
+    .unwrap();
+
+    let port = find_available_port().await;
+    let mut config = test_config(port);
+    config.gateway.guardrails_dir = Some(guardrails_dir.path().to_string_lossy().into_owned());
+
+    let server = TestServer::new(config).await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "message with badword in it",
+            "chat_id": "shortcircuit-test",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "Blocked by FIRST rule");
+}
+
+/// (e) Fail-open on CEL evaluation error (on_error=allow) → HTTP 202
+#[tokio::test]
+async fn test_guardrail_fail_open_on_cel_error() {
+    let guardrails_dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        guardrails_dir.path().join("01-error-rule.json"),
+        r#"{"name":"error-rule","expression":"message.nonexistent_deeply_nested.field == true","action":"block","on_error":"allow","reject_message":"Should not see this"}"#,
+    )
+    .unwrap();
+
+    let port = find_available_port().await;
+    let mut config = test_config(port);
+    config.gateway.guardrails_dir = Some(guardrails_dir.path().to_string_lossy().into_owned());
+
+    let server = TestServer::new(config).await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "Any message triggers the error rule",
+            "chat_id": "failopen-test",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 202);
+}
+
+/// (f) Disabled rule is ignored → HTTP 202 (message passes through)
+#[tokio::test]
+async fn test_guardrail_disabled_rule_ignored() {
+    let guardrails_dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        guardrails_dir.path().join("01-disabled.json"),
+        r#"{"name":"disabled-blocker","expression":"true","action":"block","enabled":false,"reject_message":"Should never block"}"#,
+    )
+    .unwrap();
+
+    let port = find_available_port().await;
+    let mut config = test_config(port);
+    config.gateway.guardrails_dir = Some(guardrails_dir.path().to_string_lossy().into_owned());
+
+    let server = TestServer::new(config).await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "This should pass through despite block-all rule",
+            "chat_id": "disabled-test",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 202);
+}
+
+/// (g) Empty guardrails directory = passthrough → HTTP 202
+#[tokio::test]
+async fn test_guardrail_empty_dir_passthrough() {
+    let guardrails_dir = tempfile::TempDir::new().unwrap();
+
+    let port = find_available_port().await;
+    let mut config = test_config(port);
+    config.gateway.guardrails_dir = Some(guardrails_dir.path().to_string_lossy().into_owned());
+
+    let server = TestServer::new(config).await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "Any message at all in empty guardrails dir",
+            "chat_id": "empty-dir-test",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 202);
+}
+
+/// (h) Regex matching via matches() → HTTP 403 when pattern matches
+#[tokio::test]
+async fn test_guardrail_regex_matches_blocks() {
+    let guardrails_dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        guardrails_dir.path().join("01-regex.json"),
+        r#"{"name":"no-passwords","expression":"message.text.matches('(?i)password')","action":"block","reject_message":"Message contains sensitive content"}"#,
+    )
+    .unwrap();
+
+    let port = find_available_port().await;
+    let mut config = test_config(port);
+    config.gateway.guardrails_dir = Some(guardrails_dir.path().to_string_lossy().into_owned());
+
+    let server = TestServer::new(config).await;
+    let client = server.client();
+
+    let resp = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "My Password is hunter2",
+            "chat_id": "regex-test",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "Message contains sensitive content");
+
+    let resp2 = client
+        .post(server.url("/api/v1/chat/test_generic"))
+        .header("Authorization", "Bearer generic_token")
+        .json(&serde_json::json!({
+            "text": "This message is completely safe",
+            "chat_id": "regex-test-2",
+            "from": {"id": "user1"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp2.status(), 202);
+}
