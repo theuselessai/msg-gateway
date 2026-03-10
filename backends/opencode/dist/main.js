@@ -188,12 +188,76 @@ function startEventStream() {
     });
     return es;
 }
+async function uploadResponseAsFile(text) {
+    const form = new FormData();
+    form.append("file", new Blob([text], { type: "text/markdown" }), "response.md");
+    form.append("filename", "response.md");
+    form.append("mime_type", "text/markdown");
+    const resp = await fetch(`${GATEWAY_URL}/api/v1/files`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${GATEWAY_SEND_TOKEN}` },
+        body: form,
+        signal: AbortSignal.timeout(30000),
+    });
+    if (!resp.ok) {
+        const body = await resp.text();
+        throw new Error(`File upload failed: ${resp.status} ${body}`);
+    }
+    const data = (await resp.json());
+    return data.file_id;
+}
 async function relayToGateway(credentialId, chatId, text) {
-    const relayBody = {
-        credential_id: credentialId,
-        chat_id: chatId,
-        text,
-    };
+    const threshold = backendConfig.max_response_length ?? 4096;
+    if (text.length > threshold) {
+        let fileId = null;
+        try {
+            fileId = await uploadResponseAsFile(text);
+        }
+        catch (err) {
+            logError("Failed to upload response as file, falling back to truncated text", err);
+        }
+        if (fileId !== null) {
+            const relayBody = {
+                credential_id: credentialId,
+                chat_id: chatId,
+                text: "(response sent as file)",
+                file_ids: [fileId],
+            };
+            await retry(async () => {
+                const resp = await fetch(`${GATEWAY_URL}/api/v1/send`, {
+                    method: "POST",
+                    headers: {
+                        Authorization: `Bearer ${GATEWAY_SEND_TOKEN}`,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify(relayBody),
+                    signal: AbortSignal.timeout(15000),
+                });
+                if (!resp.ok) {
+                    const body = await resp.text();
+                    throw new Error(`Gateway relay failed: ${resp.status} ${body}`);
+                }
+            });
+            return;
+        }
+        const truncated = text.slice(0, threshold) + `\n\n[Response truncated at ${threshold} chars — file upload failed]`;
+        await retry(async () => {
+            const resp = await fetch(`${GATEWAY_URL}/api/v1/send`, {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${GATEWAY_SEND_TOKEN}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ credential_id: credentialId, chat_id: chatId, text: truncated }),
+                signal: AbortSignal.timeout(15000),
+            });
+            if (!resp.ok) {
+                const body = await resp.text();
+                throw new Error(`Gateway relay failed: ${resp.status} ${body}`);
+            }
+        });
+        return;
+    }
     await retry(async () => {
         const resp = await fetch(`${GATEWAY_URL}/api/v1/send`, {
             method: "POST",
@@ -201,7 +265,7 @@ async function relayToGateway(credentialId, chatId, text) {
                 Authorization: `Bearer ${GATEWAY_SEND_TOKEN}`,
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify(relayBody),
+            body: JSON.stringify({ credential_id: credentialId, chat_id: chatId, text }),
             signal: AbortSignal.timeout(15000),
         });
         if (!resp.ok) {
@@ -242,7 +306,13 @@ app.post("/send", async (request, reply) => {
             },
             body: JSON.stringify({
                 model: backendConfig.model,
-                parts: [{ type: "text", text: message.text }],
+                parts: [
+                    ...(message.attachments ?? []).map((a) => ({
+                        type: "text",
+                        text: `[Attached file: ${a.filename} (${a.mime_type}) - ${a.download_url}]`,
+                    })),
+                    { type: "text", text: message.text },
+                ],
             }),
             signal: AbortSignal.timeout(10000),
         });
