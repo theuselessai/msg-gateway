@@ -23,8 +23,8 @@ function findFreePort(): Promise<number> {
 
 function findGatewayBinary(): string {
   const dir = path.resolve(__dirname, '../../');
-  const release = path.join(dir, 'target/release/msg-gateway');
-  const debug = path.join(dir, 'target/debug/msg-gateway');
+  const release = path.join(dir, 'target/release/gw-server');
+  const debug = path.join(dir, 'target/debug/gw-server');
   if (fs.existsSync(release)) return release;
   if (fs.existsSync(debug)) return debug;
   throw new Error(`Gateway binary not found at ${release} or ${debug}. Run 'cargo build' first.`);

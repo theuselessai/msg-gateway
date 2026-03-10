@@ -1,3 +1,6 @@
+[workspace]
+members = ["crates/gw-cli"]
+
 [package]
 name = "msg-gateway"
 version = "0.1.0"
@@ -8,7 +11,7 @@ name = "msg_gateway"
 path = "src/lib.rs"
 
 [[bin]]
-name = "msg-gateway"
+name = "gw-server"
 path = "src/main.rs"
 
 [dependencies]

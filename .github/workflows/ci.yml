@@ -95,11 +95,18 @@ jobs:
       - name: Build release
         run: cargo build --release --verbose
 
-      - name: Upload gateway binary
+      - name: Upload gw-server binary
         uses: actions/upload-artifact@v4
         with:
-          name: gateway-binary
-          path: target/release/msg-gateway
+          name: gw-server-binary
+          path: target/release/gw-server
+          retention-days: 1
+
+      - name: Upload gw-cli binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: gw-cli-binary
+          path: target/release/gw-cli
           retention-days: 1
 
   e2e:
@@ -109,14 +116,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download gateway binary
+      - name: Download gw-server binary
         uses: actions/download-artifact@v4
         with:
-          name: gateway-binary
+          name: gw-server-binary
           path: target/release
 
       - name: Make binary executable
-        run: chmod +x target/release/msg-gateway
+        run: chmod +x target/release/gw-server
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
