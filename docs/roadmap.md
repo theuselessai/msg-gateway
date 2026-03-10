@@ -17,50 +17,32 @@ msg-gateway is the unified messaging layer for Pipelit and other LLM-based appli
 - Admin API for credential management
 - ~80% test coverage
 
-## v0.2.0 - Adapters & E2E Testing (Target: Apr 2026)
+## v0.2.0 - Foundation & E2E Testing (Target: Apr 2026)
 
 ### Goals
 1. Establish E2E testing framework with BDD/Gherkin
-2. Migrate all adapters to Node.js (no virtualenv dependency)
-3. Add Email, Slack, Discord adapters
-4. Complete protocol documentation
+2. Migrate Telegram adapter to Node.js (no virtualenv dependency)
+3. Message format redesign with file support
+4. Named backends with per-credential routing
+5. CEL-based message guardrails with hot-reload
+6. OpenCode backend adapter (built-in + external)
 
 ### Tasks
 
-| Order | Issue | Task | Priority | Estimate | Blocked By | Status |
-|-------|-------|------|----------|----------|------------|--------|
-| 1 | #15 | Message Format Redesign (core fields, files[], extra_data) | P0 | 2-3 days | — | ✅ Done |
-| 2 | #16 | File Upload API (POST /api/v1/files) | P0 | 1-2 days | #15 | ✅ Done |
-| 3 | #12 | E2E Test Framework (Cucumber-JS) | P0 | 3-4 days | #15 | ✅ Done |
-| 4 | #13 | Telegram Adapter → Node.js | P0 | 2-3 days | #15, #12 | ✅ Done |
-| 5 | #17 | Generic Adapter File Support | P1 | 1-2 days | #15, #16 | ✅ Done |
-| 6 | #11 | Email Adapter (Node.js) | P1 | 5-7 days | #15, #12 | Planned |
-| 7 | #10 | Slack Adapter (Node.js) | P1 | 3-5 days | #15, #12 | Planned |
-| 8 | #9 | Discord Adapter (Node.js) | P1 | 3-5 days | #15, #12 | Planned |
-| 9 | — | Protocol Documentation | P1 | 1 day | — | Planned |
-
-### Dependency Graph
-
-```
-#15 Message Format Redesign
- ├──▶ #16 File Upload API
- │     └──▶ #17 Generic Adapter File Support
- ├──▶ #12 E2E Test Framework
- │     ├──▶ #13 Telegram → Node.js
- │     ├──▶ #11 Email Adapter
- │     ├──▶ #10 Slack Adapter
- │     └──▶ #9  Discord Adapter
- └──▶ #8  Pipelit Integration (v0.3.0)
-```
-
-### Phases
-
-**Phase 1 — Foundation** (`phase:1-foundation`)
-- #15 → #16 → #17: Message format, file API, generic adapter files
-- #12: E2E test framework (can run in parallel with #16)
-
-**Phase 2 — Adapters** (`phase:2-adapters`)
-- #13, #11, #10, #9: All adapter work (depends on Phase 1)
+| Order | Issue | Task | Priority | Status |
+|-------|-------|------|----------|--------|
+| 1 | #15 | Message Format Redesign (core fields, files[], extra_data) | P0 | ✅ Done |
+| 2 | #16 | File Upload API (POST /api/v1/files) | P0 | ✅ Done |
+| 3 | #12 | E2E Test Framework (Cucumber-JS) | P0 | ✅ Done |
+| 4 | #13 | Telegram Adapter → Node.js | P0 | ✅ Done |
+| 5 | #17 | Generic Adapter File Support | P1 | ✅ Done |
+| 6 | #29 | Complete E2E Test Coverage (19 scenarios) | P1 | ✅ Done |
+| 7 | #32 | OpenCode Backend Adapter (built-in Rust) | P1 | ✅ Done |
+| 8 | #33 | External Backend Subprocess Protocol | P1 | ✅ Done |
+| 9 | #38 | Named Backends with Per-Credential Routing | P1 | ✅ Done |
+| 10 | #40 | CEL-Based Guardrails with Hot-Reload | P1 | ✅ Done |
+| 11 | #41 | OpenCode SSE Response Delivery + File Attachments | P1 | ✅ Done |
+| 12 | — | Protocol Documentation | P2 | Planned |
 
 ### Technical Decisions
 
@@ -76,44 +58,47 @@ msg-gateway is the unified messaging layer for Pipelit and other LLM-based appli
 - **HTTP Framework**: Fastify (lightweight, fast)
 - **Reason**: No virtualenv needed, fast startup, consistent tooling
 
-### Milestones
-
-```
-Week 1: Phase 1 — Foundation
-  ├── #15 Message Format Redesign (Rust structs + server logic)
-  ├── #16 File Upload API
-  ├── #12 E2E Test Framework (Cucumber-JS setup + CI)
-  └── #17 Generic Adapter File Support
-
-Week 2: Phase 2a — Telegram Migration
-  └── #13 Telegram Adapter → Node.js (first adapter on new format)
-
-Week 3-4: Phase 2b — New Adapters
-  ├── #11 Email Adapter (IMAP/SMTP)
-  ├── #10 Slack Adapter (Events API)
-  ├── #9  Discord Adapter (discord.js)
-  └── Protocol Documentation
-```
-
-## v0.3.0 - Pipelit Integration (Target: May 2026)
+## v0.3.0 - CLI Tool & Pipelit Integration (Target: May 2026)
 
 ### Goals
-1. Full integration with Pipelit unified inbound endpoint
-2. Multi-model routing support
-3. Production hardening
+1. `gw` CLI tool — unix-philosophy gateway client for chat, admin, and agent tooling
+2. Full integration with Pipelit unified inbound endpoint
+3. End-to-end protocol verification with real Pipelit instance
+4. Production hardening (rate limiting, observability)
 
 ### Tasks
 
-| Task | Priority | Related |
-|------|----------|---------|
-| Pipelit unified inbound endpoint | P0 | Pipelit #134 |
-| Protocol verification & testing | P0 | #8 |
-| Multi-model routing (Claude/GLM/MiniMax) | P1 | Pipelit #126 |
-| Rate limiting | P2 | - |
-| Metrics & observability | P2 | - |
+| Order | Task | Priority | Related | Status |
+|-------|------|----------|---------|--------|
+| 1 | `gw` CLI — project setup & client foundation | P0 | — | Planned |
+| 2 | `gw send` + `gw listen` + `gw health` commands | P0 | — | Planned |
+| 3 | `gw chat` interactive REPL | P0 | — | Planned |
+| 4 | `gw credentials` admin commands | P1 | — | Planned |
+| 5 | Pipelit unified inbound endpoint | P0 | Pipelit #134 | Planned |
+| 6 | Protocol verification & E2E testing | P0 | #8 | Planned |
+| 7 | Rate limiting | P2 | — | Planned |
+| 8 | Metrics & observability (Prometheus) | P2 | — | Planned |
+
+Dev plan: [`docs/dev-plans/gw-cli.md`](dev-plans/gw-cli.md)
+
+### OpenCode Enhancements (parallel track)
+
+| Issue | Task | Priority | Status |
+|-------|------|----------|--------|
+| #35 | Async message mode for OpenCode backend | P2 | Open |
+| #34 | Full OpenCode server mode integration | P2 | Open |
 
 ## Future Considerations (v0.4.0+)
 
+### Additional Adapters (deprioritized from v0.2.0)
+
+| Issue | Adapter | Estimate | Notes |
+|-------|---------|----------|-------|
+| #11 | Email (IMAP/SMTP) | 5-7 days | Dev plan in docs/dev-plans/email-adapter.md |
+| #10 | Slack (Events API) | 3-5 days | Dev plan in docs/dev-plans/slack-adapter.md |
+| #9 | Discord (discord.js) | 3-5 days | Dev plan in docs/dev-plans/discord-adapter.md |
+
+### Other
 - WhatsApp adapter
 - Microsoft Teams adapter
 - Matrix adapter

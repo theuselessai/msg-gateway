@@ -50,8 +50,8 @@
       "active": true,
       "emergency": false,
       "route": {
-        "workflow_id": "wf_local",
-        "trigger_id": "trigger_generic"
+        "workflow_slug": "my-workflow",
+        "trigger_node_id": "node_chat_trigger"
       }
     },
     "yao_telegram": {
@@ -64,8 +64,8 @@
         "poll_timeout": 30
       },
       "route": {
-        "workflow_id": "wf_abc123",
-        "trigger_id": "trigger_telegram_yao"
+        "workflow_slug": "my-workflow",
+        "trigger_node_id": "node_telegram_trigger"
       }
     },
     "dev_opencode": {

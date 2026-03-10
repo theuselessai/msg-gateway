@@ -25,7 +25,27 @@ User Protocols          Gateway              Backend Protocols
 - **Config hot reload**: File watcher detects changes and syncs adapter instances
 - **Health monitoring**: Buffers messages when backend is down, sends alerts
 
+## Project Structure
+
+This is a Cargo workspace with two crates:
+
+```
+msg-gateway/
+├── Cargo.toml              # Workspace root + gateway crate
+├── src/                    # Gateway binary + library
+└── crates/
+    └── gw-cli/             # CLI tool binary (`gw-cli`)
+        ├── Cargo.toml
+        └── src/
+            ├── main.rs     # clap entry point
+            ├── client.rs   # HTTP + WebSocket gateway client
+            ├── output.rs   # TTY-aware JSON/human formatter
+            └── commands/   # Subcommand implementations
+```
+
 ## Key Files
+
+### Gateway (`src/`)
 
 | File | Purpose |
 |------|---------|
@@ -43,11 +63,27 @@ User Protocols          Gateway              Backend Protocols
 | `src/admin.rs` | Admin API CRUD |
 | `src/error.rs` | Error types |
 
+### CLI Tool (`crates/gw-cli/`)
+
+| File | Purpose |
+|------|---------|
+| `src/main.rs` | clap CLI definition, subcommand routing |
+| `src/client.rs` | HTTP client for gateway API + WebSocket connection |
+| `src/output.rs` | TTY-aware output (JSON when piped, human-friendly on TTY) |
+| `src/commands/chat.rs` | Interactive REPL (WS receive + HTTP send loop) |
+| `src/commands/send.rs` | One-shot message send (--text or stdin) |
+| `src/commands/listen.rs` | WebSocket JSONL stream to stdout |
+| `src/commands/credentials.rs` | Admin CRUD for credentials |
+| `src/commands/health.rs` | Gateway health check |
+
 ## Common Commands
 
 ```bash
-# Build
+# Build everything (gateway + CLI)
 cargo build --release
+
+# Build just the CLI
+cargo build --release -p gw-cli
 
 # Run tests
 cargo test
@@ -55,14 +91,18 @@ cargo test
 # Run with coverage
 cargo llvm-cov
 
-# Lint
-cargo clippy -- -D warnings
+# Lint (workspace-wide)
+cargo clippy --all-targets --all-features -- -D warnings
 
-# Format
-cargo fmt
+# Format (workspace-wide)
+cargo fmt --all
 
-# Run the gateway
+# Run the gateway (binary: gw-server)
 GATEWAY_CONFIG=config.json cargo run
+
+# Run the CLI (binary: gw-cli)
+cargo run -p gw-cli -- --help
+cargo run -p gw-cli -- chat my_cred --chat-id test --token my-token
 ```
 
 ## Development Guidelines

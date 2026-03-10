@@ -26,6 +26,7 @@ A standalone Rust message gateway that bridges user-facing communication protoco
 - **Health monitoring** — Emergency alerts when backend is unreachable
 - **Hot reload** — Config and guardrail changes apply without restart
 - **Admin API** — CRUD operations for credentials
+- **`gw-cli` CLI tool** — Unix-philosophy command-line client for chat, admin, and agent integration
 
 ## Quick Start
 
@@ -38,7 +39,7 @@ cp config.example.json config.json
 # Edit config.json with your credentials
 
 # Run
-GATEWAY_CONFIG=config.json ./target/release/msg-gateway
+GATEWAY_CONFIG=config.json ./target/release/gw-server
 ```
 
 ## Configuration
@@ -241,6 +242,59 @@ Point `guardrails_dir` at a directory of rule files:
 ```
 
 If `guardrails_dir` is omitted and a `guardrails/` directory exists next to `config.json`, it's picked up automatically.
+
+## CLI Tool (`gw-cli`)
+
+A standalone command-line client for interacting with the gateway. Supports interactive chat, one-shot messaging, WebSocket streaming, credential management, and health checks. Backend-agnostic — works with Pipelit, OpenCode, or any external backend.
+
+### Install
+
+```bash
+cargo build --release -p gw-cli
+# Binary at target/release/gw-cli
+```
+
+### Usage
+
+```bash
+# Set connection defaults
+export GATEWAY_URL=http://localhost:8080
+export GATEWAY_TOKEN=my-credential-token
+
+# Interactive chat REPL
+gw-cli chat my_credential --chat-id session-1
+
+# One-shot send (pipe-friendly)
+gw-cli send my_credential --chat-id session-1 --text "Hello"
+echo "Hello" | gw-cli send my_credential --chat-id session-1
+
+# Stream responses as JSONL (for agents, scripts, jq)
+gw-cli listen my_credential --chat-id session-1
+
+# Health check
+gw-cli health
+
+# Credential management (requires GATEWAY_ADMIN_TOKEN)
+gw-cli credentials list --admin-token my-admin-token
+gw-cli credentials create my_cred --adapter generic --token secret \
+  --backend pipelit --route '{"workflow_slug":"my-wf","trigger_node_id":"node_1"}'
+gw-cli credentials activate my_cred
+gw-cli credentials deactivate my_cred
+```
+
+### Output Modes
+
+- **TTY** (interactive terminal) — human-readable formatted output
+- **Piped** (stdout redirected) — auto-switches to JSON/JSONL
+- **`--json`** flag — force JSON output in any context
+
+### Environment Variables
+
+| Variable | Used by | Description |
+|----------|---------|-------------|
+| `GATEWAY_URL` | all commands | Gateway URL (default: `http://localhost:8080`) |
+| `GATEWAY_TOKEN` | chat, send, listen | Credential token for authentication |
+| `GATEWAY_ADMIN_TOKEN` | credentials, health | Admin token for management commands |
 
 ## API Endpoints
 
