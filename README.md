@@ -13,16 +13,18 @@
 
 ---
 
-A standalone Rust message gateway that bridges user-facing communication protocols (Telegram, Discord, Slack, Email) to backend agent protocols (Pipelit, OpenCode). External adapters are subprocess-managed, making it easy to add new protocols in any language.
+A standalone Rust message gateway that bridges user-facing communication protocols (Telegram, Discord, Slack, Email) to backend agent protocols (Pipelit, OpenCode). Both user-facing adapters and backends can run as external subprocesses, making it easy to add new protocols in any language.
 
 ## Features
 
 - **Multi-protocol support** — Telegram, Discord, Slack, Email, Generic HTTP/WebSocket
 - **External adapter architecture** — Adapters run as separate processes, written in any language
-- **Backend agnostic** — Supports Pipelit (webhook) and OpenCode (REST+SSE) backends
+- **Pluggable backends** — Built-in support for Pipelit and OpenCode; external backends run as subprocesses
+- **Named backend routing** — Route different credentials to different backend instances
+- **Message filtering** — CEL-based guardrails for inbound/outbound message validation
 - **File handling** — Automatic download/upload of attachments with local caching
 - **Health monitoring** — Emergency alerts when backend is unreachable
-- **Hot reload** — Config changes apply without restart
+- **Hot reload** — Config and guardrail changes apply without restart
 - **Admin API** — CRUD operations for credentials
 
 ## Quick Start
@@ -45,21 +47,43 @@ GATEWAY_CONFIG=config.json ./target/release/msg-gateway
 {
   "gateway": {
     "listen": "0.0.0.0:8080",
-    "admin_token": "your-admin-token",
-    "default_target": {
-      "protocol": "pipelit",
-      "inbound_url": "http://localhost:5000/api/v1/inbound",
-      "token": "your-backend-token"
-    },
+    "admin_token": "${GATEWAY_ADMIN_TOKEN}",
+    "default_backend": "pipelit",
     "adapters_dir": "./adapters",
-    "adapter_port_range": [9000, 9100]
+    "adapter_port_range": [9000, 9100],
+    "guardrails_dir": "./guardrails",
+    "backends_dir": "./backends",
+    "backend_port_range": [9200, 9300]
+  },
+  "backends": {
+    "pipelit": {
+      "protocol": "pipelit",
+      "inbound_url": "http://localhost:8000/api/v1/inbound",
+      "token": "${PIPELIT_API_TOKEN}",
+      "active": true
+    },
+    "opencode": {
+      "protocol": "external",
+      "adapter_dir": "./backends/opencode",
+      "token": "${OPENCODE_BACKEND_TOKEN}",
+      "active": true,
+      "config": {
+        "base_url": "http://127.0.0.1:4096",
+        "token": "${OPENCODE_API_TOKEN}",
+        "model": {
+          "providerID": "anthropic",
+          "modelID": "claude-sonnet-4-5"
+        }
+      }
+    }
   },
   "auth": {
-    "send_token": "your-send-token"
+    "send_token": "${GATEWAY_SEND_TOKEN}"
   },
   "credentials": {
     "my_telegram": {
       "adapter": "telegram",
+      "backend": "pipelit",
       "token": "${TELEGRAM_BOT_TOKEN}",
       "active": true,
       "route": {"channel": "telegram"}
@@ -69,6 +93,40 @@ GATEWAY_CONFIG=config.json ./target/release/msg-gateway
 ```
 
 Environment variables can be referenced with `${VAR_NAME}` syntax.
+
+## Backends
+
+Backends receive messages from the gateway and process them with AI/LLM services. The gateway supports two backend types:
+
+### Built-in Backends
+
+Built-in backends are compiled into the gateway binary:
+
+- **Pipelit** (`protocol: "pipelit"`) — Webhook-based backend with callback support
+- **OpenCode** (`protocol: "opencode"`) — REST + SSE backend with session management (built-in Rust implementation)
+
+### External Backends
+
+External backends run as separate subprocesses in `backends_dir`. Each backend directory contains:
+
+```
+backends/opencode/
+├── adapter.json    # {"name": "opencode", "command": "node", "args": ["dist/main.js"]}
+├── dist/main.js    # Backend implementation
+└── package.json
+```
+
+External backends receive environment variables:
+- `BACKEND_PORT` — Port to listen on
+- `GATEWAY_URL` — Gateway callback URL
+- `BACKEND_TOKEN` — Auth token for gateway requests
+- `BACKEND_CONFIG` — JSON config blob (from `config.backends[name].config`)
+
+External backends must implement:
+- `POST /send` — Receive messages from gateway
+- `GET /health` — Health check endpoint
+
+Each credential specifies which backend to route to via the `backend` field. The gateway spawns one backend instance per named backend entry in `config.backends`, shared across all credentials referencing that backend.
 
 ## Adapters
 
@@ -198,6 +256,8 @@ If `guardrails_dir` is omitted and a `guardrails/` directory exists next to `con
 
 ## Development
 
+### Local Setup
+
 ```bash
 # Run tests
 cargo test
@@ -212,15 +272,52 @@ cargo clippy -- -D warnings
 cargo fmt
 ```
 
+### Pre-Push Validation (Recommended)
+
+Install a pre-push hook to catch issues before CI:
+
+```bash
+cat > .git/hooks/pre-push << 'EOF'
+#!/bin/bash
+set -e
+echo "Running pre-push checks..."
+cargo fmt --all -- --check || { echo "❌ Run: cargo fmt --all"; exit 1; }
+cargo clippy --all-targets --all-features -- -D warnings || { echo "❌ Fix clippy warnings"; exit 1; }
+cargo test --all-features || { echo "❌ Tests failed"; exit 1; }
+echo "✅ All checks passed"
+EOF
+chmod +x .git/hooks/pre-push
+```
+
+This prevents formatting, linting, and test failures from reaching CI.
+
 ## Contributing
 
-Contributions are welcome! Please read [CLAUDE.md](CLAUDE.md) for development guidelines.
+Contributions are welcome! Please read [CLAUDE.md](CLAUDE.md) for detailed development guidelines.
+
+### Quick Start
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+3. Install the pre-push hook (see Development section above)
+4. Make your changes
+5. Run the full check suite: `cargo fmt --all && cargo clippy -- -D warnings && cargo test`
+6. Commit your changes (`git commit -m 'feat: add amazing feature'`)
+7. Push to the branch (`git push origin feature/amazing-feature`)
+8. Open a Pull Request
+
+### PR Quality Checklist
+
+Before opening a PR, verify:
+
+- [ ] `cargo fmt --all` — Code is formatted
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` — No warnings
+- [ ] `cargo test --all-features` — All tests pass
+- [ ] `cargo build --release` — Release build succeeds
+- [ ] Error handling uses `Result<?>`/`map_err` (no `unwrap()`/`expect()` in production code)
+- [ ] Structured logging includes relevant context fields (e.g., `credential_id`, `message_id`)
+- [ ] Config secrets use `${ENV_VAR}` syntax (no hardcoded tokens)
+- [ ] New functionality includes tests
 
 All PRs must pass CI checks (lint, test, build) and AI code review.
 
