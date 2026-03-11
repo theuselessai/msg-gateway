@@ -30,7 +30,7 @@ pub async fn run(ctx: &Context, credential_id: &str, chat_id: &str) -> Result<()
                 output::print_jsonl(&msg);
             }
             Err(e) => {
-                return Err(e.into());
+                return Err(e);
             }
         }
     }
