@@ -1,4 +1,4 @@
-//! `gw credentials` — admin CRUD operations for gateway credentials.
+//! `plit credentials` — admin CRUD operations for gateway credentials.
 
 use anyhow::Result;
 

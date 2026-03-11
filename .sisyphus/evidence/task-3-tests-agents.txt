@@ -1,0 +1,20 @@
+QA RESULTS FOR tests/AGENTS.md
+==============================
+
+File Existence: EXISTS
+Line Count: 40 (within 30-55 range)
+Serial Mentions: 1 (requirement met)
+
+VERIFICATION PASSED:
+✓ File created at /home/aka/programs/msg-gateway/tests/AGENTS.md
+✓ Contains 40 lines (30-55 range)
+✓ Mentions #[serial] at least once
+✓ Does NOT duplicate conventions from root AGENTS.md
+✓ Content written verbatim as specified
+
+CONTENT SUMMARY:
+- Section: FILES (3 test files documented)
+- Section: CRITICAL PATTERNS (4 patterns including #[serial])
+- Section: TEST HELPERS (4 helper functions)
+- Section: RUNNING TESTS (3 cargo commands)
+- Section: GOTCHAS (5 gotchas documented)

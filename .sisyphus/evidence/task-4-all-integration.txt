@@ -1,0 +1,35 @@
+
+running 30 tests
+test test_admin_auth ... ok
+test test_file_download_not_found ... ok
+test test_activate_deactivate_credential ... ok
+test test_file_upload_and_download ... ok
+test test_file_upload_default_mime_type ... ok
+test test_file_upload_filename_from_multipart ... ok
+test test_delete_credential ... ok
+test test_file_upload_no_file_cache ... ok
+test test_file_upload_no_auth ... ok
+test test_file_upload_wrong_auth ... ok
+test test_generic_chat_endpoint ... ok
+test test_generic_chat_nonexistent_credential ... ok
+test test_generic_chat_wrong_token ... ok
+test test_generic_inbound_with_file_download_failure ... ok
+test test_generic_inbound_with_file_no_cache ... ok
+test test_get_credential ... ok
+test test_health_endpoint ... ok
+test test_list_credentials ... ok
+test test_generic_inbound_with_file_success ... ok
+test test_opencode_backend_full_roundtrip ... ok
+test test_opencode_backend_auth_basic ... ok
+test test_opencode_backend_error_response ... ok
+test test_opencode_backend_model_config_sent ... ok
+test test_send_auth ... ok
+test test_send_missing_fields ... ok
+test test_send_to_inactive_credential ... ok
+test test_send_to_nonexistent_credential ... ok
+test test_send_to_generic_with_file_ids_includes_file_urls ... ok
+test test_update_credential ... ok
+test test_opencode_backend_session_reuse ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.98s
+

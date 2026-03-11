@@ -1,4 +1,4 @@
-//! `gw listen` — stream outbound messages from WebSocket as JSONL.
+//! `plit listen` — stream outbound messages from WebSocket as JSONL.
 //!
 //! Connects to the gateway WebSocket and prints each message as a JSON line
 //! to stdout. Designed for piping to jq, agent consumption, or scripting.

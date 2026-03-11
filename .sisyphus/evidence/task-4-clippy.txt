@@ -1,0 +1,140 @@
+    Checking msg-gateway v0.1.0 (/home/aka/programs/msg-gateway)
+error: this `impl` can be derived
+  --> src/config.rs:81:1
+   |
+81 | / impl Default for GuardrailType {
+82 | |     fn default() -> Self {
+83 | |         GuardrailType::Cel
+84 | |     }
+85 | | }
+   | |_^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.93.0/index.html#derivable_impls
+   = note: `-D clippy::derivable-impls` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::derivable_impls)]`
+help: replace the manual implementation with a derive attribute and mark the default variant
+   |
+74 + #[derive(Default)]
+75 | pub enum GuardrailType {
+76 |     /// CEL (Common Expression Language) evaluation
+77 ~     #[default]
+78 ~     Cel,
+   |
+
+error: this `impl` can be derived
+   --> src/config.rs:97:1
+    |
+ 97 | / impl Default for GuardrailAction {
+ 98 | |     fn default() -> Self {
+ 99 | |         GuardrailAction::Block
+100 | |     }
+101 | | }
+    | |_^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.93.0/index.html#derivable_impls
+help: replace the manual implementation with a derive attribute and mark the default variant
+    |
+ 90 + #[derive(Default)]
+ 91 | pub enum GuardrailAction {
+ 92 |     /// Block the message
+ 93 ~     #[default]
+ 94 ~     Block,
+    |
+
+error: this `impl` can be derived
+   --> src/config.rs:115:1
+    |
+115 | / impl Default for GuardrailDirection {
+116 | |     fn default() -> Self {
+117 | |         GuardrailDirection::Inbound
+118 | |     }
+119 | | }
+    | |_^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.93.0/index.html#derivable_impls
+help: replace the manual implementation with a derive attribute and mark the default variant
+    |
+106 + #[derive(Default)]
+107 | pub enum GuardrailDirection {
+108 |     /// Inbound messages only (adapter → gateway)
+109 ~     #[default]
+110 ~     Inbound,
+    |
+
+error: this `impl` can be derived
+   --> src/config.rs:131:1
+    |
+131 | / impl Default for GuardrailOnError {
+132 | |     fn default() -> Self {
+133 | |         GuardrailOnError::Allow
+134 | |     }
+135 | | }
+    | |_^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.93.0/index.html#derivable_impls
+help: replace the manual implementation with a derive attribute and mark the default variant
+    |
+124 + #[derive(Default)]
+125 | pub enum GuardrailOnError {
+126 |     /// Allow the message (fail-open)
+127 ~     #[default]
+128 ~     Allow,
+    |
+
+error: could not compile `msg-gateway` (lib) due to 4 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: used `assert_eq!` with a literal bool
+   --> src/config.rs:674:9
+    |
+674 |         assert_eq!(rule.enabled, true);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.93.0/index.html#bool_assert_comparison
+    = note: `-D clippy::bool-assert-comparison` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::bool_assert_comparison)]`
+help: replace it with `assert!(..)`
+    |
+674 -         assert_eq!(rule.enabled, true);
+674 +         assert!(rule.enabled);
+    |
+
+error: used `assert_eq!` with a literal bool
+   --> src/config.rs:698:9
+    |
+698 |         assert_eq!(rule.enabled, false);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.93.0/index.html#bool_assert_comparison
+help: replace it with `assert!(..)`
+    |
+698 -         assert_eq!(rule.enabled, false);
+698 +         assert!(!rule.enabled);
+    |
+
+error: used `assert_eq!` with a literal bool
+   --> src/config.rs:705:9
+    |
+705 |         assert_eq!(rule.enabled, true);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.93.0/index.html#bool_assert_comparison
+help: replace it with `assert!(..)`
+    |
+705 -         assert_eq!(rule.enabled, true);
+705 +         assert!(rule.enabled);
+    |
+
+error: used `assert_eq!` with a literal bool
+   --> src/config.rs:712:9
+    |
+712 |         assert_eq!(rule.enabled, false);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.93.0/index.html#bool_assert_comparison
+help: replace it with `assert!(..)`
+    |
+712 -         assert_eq!(rule.enabled, false);
+712 +         assert!(!rule.enabled);
+    |
+
+error: could not compile `msg-gateway` (lib test) due to 8 previous errors

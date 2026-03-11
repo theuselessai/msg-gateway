@@ -1,0 +1,40 @@
+.........................................................................................................................F-------.F-------.
+
+Failures:
+
+1) Scenario: Inbound text message from Telegram is forwarded to backend # features/telegram.feature:4
+   ✖ Given a running gateway with Telegram adapter # features/step_definitions/telegram.steps.ts:8
+       Error: function timed out, ensure the promise resolves within 30000 milliseconds
+           at Timeout.<anonymous> (/home/aka/programs/msg-gateway-opencode/e2e/node_modules/@cucumber/cucumber/src/time.ts:52:14)
+           at listOnTimeout (node:internal/timers:588:17)
+           at processTimers (node:internal/timers:523:7)
+   - And a mock backend listening # features/step_definitions/gateway.steps.ts:15
+   - And a mock Telegram server running # features/step_definitions/telegram.steps.ts:23
+   - When a Telegram user sends text "Hello from Telegram" in chat 12345 # features/step_definitions/telegram.steps.ts:30
+   - Then the backend should receive a message within 8000ms # features/step_definitions/gateway.steps.ts:53
+   - And the received message text should be "Hello from Telegram" # features/step_definitions/gateway.steps.ts:60
+   - And the received message source.protocol should be "telegram" # features/step_definitions/gateway.steps.ts:76
+   - And the received message credential_id should be "test_telegram" # features/step_definitions/gateway.steps.ts:68
+   ✔ After # features/step_definitions/world.ts:78
+
+2) Scenario: Outbound text message is sent via Telegram # features/telegram.feature:15
+   ✖ Given a running gateway with Telegram adapter # features/step_definitions/telegram.steps.ts:8
+       Error: function timed out, ensure the promise resolves within 30000 milliseconds
+           at Timeout.<anonymous> (/home/aka/programs/msg-gateway-opencode/e2e/node_modules/@cucumber/cucumber/src/time.ts:52:14)
+           at listOnTimeout (node:internal/timers:588:17)
+           at processTimers (node:internal/timers:523:7)
+   - And a mock Telegram server running # features/step_definitions/telegram.steps.ts:23
+   - And header "Authorization" is "Bearer test_send_token" # features/step_definitions/gateway.steps.ts:44
+   - When I POST "/api/v1/send" with body: # features/step_definitions/gateway.steps.ts:32
+       """
+       {"credential_id": "test_telegram", "chat_id": "12345", "text": "Hello Telegram"}
+       """
+   - Then the response status should be 200 # features/step_definitions/gateway.steps.ts:48
+   - And Telegram should receive a sendMessage within 5000ms # features/step_definitions/telegram.steps.ts:52
+   - And the Telegram message text should be "Hello Telegram" # features/step_definitions/telegram.steps.ts:61
+   - And the Telegram message chat_id should be "12345" # features/step_definitions/telegram.steps.ts:69
+   ✔ After # features/step_definitions/world.ts:78
+
+20 scenarios (2 failed, 18 passed)
+119 steps (2 failed, 14 skipped, 103 passed)
+1m03.152s (executing steps: 1m03.035s)

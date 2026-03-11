@@ -1,4 +1,4 @@
-//! `gw send` — one-shot message send.
+//! `plit send` — one-shot message send.
 //!
 //! Reads text from --text flag or stdin, POSTs to the generic chat endpoint,
 //! prints the result as JSON.

@@ -1,0 +1,11 @@
+{
+  "active_plan": "/home/aka/programs/msg-gateway/.sisyphus/plans/cel-guardrails.md",
+  "started_at": "2026-03-09T12:57:31.163Z",
+  "session_ids": [
+    "ses_32d81f6e3ffeWM4ln0vhwCr02P",
+    "ses_32b0c7ffcffeZ3ptaL03IZn0uJ"
+  ],
+  "plan_name": "cel-guardrails",
+  "worktree_path": "/home/aka/programs/msg-gateway-cel-guardrails",
+  "agent": "atlas"
+}

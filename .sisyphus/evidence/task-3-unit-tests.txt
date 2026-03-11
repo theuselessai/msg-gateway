@@ -1,0 +1,49 @@
+
+running 12 tests
+test backend::tests::test_opencode_adapter_creation_with_gateway_ctx ... ok
+test backend::tests::test_opencode_adapter_missing_credential_config ... ok
+test backend::tests::test_opencode_adapter_requires_base_url ... ok
+test backend::tests::test_opencode_adapter_creation ... ok
+test backend::tests::test_opencode_adapter_supports_files_false ... ok
+test backend::tests::test_opencode_adapter_missing_model_in_config ... ok
+test backend::tests::test_opencode_adapter_token_colon_in_password ... ok
+test backend::tests::test_opencode_adapter_valid_model_config ... ok
+test backend::tests::test_opencode_adapter_token_no_colon ... ok
+test backend::tests::test_opencode_adapter_valid_token_parsing ... ok
+test backend::tests::test_pipelit_adapter_requires_inbound_url ... ok
+test backend::tests::test_pipelit_adapter_creation ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 216 filtered out; finished in 0.00s
+
+
+running 12 tests
+test backend::tests::test_opencode_adapter_creation ... ok
+test backend::tests::test_opencode_adapter_creation_with_gateway_ctx ... ok
+test backend::tests::test_opencode_adapter_missing_model_in_config ... ok
+test backend::tests::test_opencode_adapter_requires_base_url ... ok
+test backend::tests::test_opencode_adapter_supports_files_false ... ok
+test backend::tests::test_opencode_adapter_token_colon_in_password ... ok
+test backend::tests::test_opencode_adapter_token_no_colon ... ok
+test backend::tests::test_opencode_adapter_valid_model_config ... ok
+test backend::tests::test_opencode_adapter_valid_token_parsing ... ok
+test backend::tests::test_pipelit_adapter_creation ... ok
+test backend::tests::test_pipelit_adapter_requires_inbound_url ... ok
+test backend::tests::test_opencode_adapter_missing_credential_config ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 216 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,23 @@
+Task 2 Evidence: OpencodeAdapter::send_message() implemented
+===========================================================
+
+Date: 2026-03-09
+File modified: src/backend.rs (worktree: /home/aka/programs/msg-gateway-opencode)
+
+Changes:
+- Replaced stub "not yet implemented" error with full implementation
+- Token parsing: split at first ':' for username:password Basic Auth
+- Model extraction from credential_config["model"]
+- Session management: read lock → check → POST /session if missing → write lock with double-check
+- Message send: POST /session/{id}/message with model + text parts
+- Response extraction: join all text parts where type=="text" with "\n\n"
+- Self-relay: POST gateway_url/api/v1/send with Bearer auth
+- Self-relay failures logged but not propagated
+- 120s timeout on reqwest client per call
+- Removed #[allow(dead_code)] from: base_url, token, gateway_url, send_token, credential_config, sessions
+- Kept #[allow(dead_code)] on: client (new client per call), poll_interval_ms (sync mode)
+- Used reqwest's .basic_auth() instead of base64 crate (not in Cargo.toml)
+
+Verification:
+- cargo test: 220 unit tests + 25 integration tests PASS
+- cargo clippy -- -D warnings: CLEAN (no warnings)

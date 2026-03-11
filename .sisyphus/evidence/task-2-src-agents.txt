@@ -1,0 +1,18 @@
+QA VERIFICATION FOR src/AGENTS.md
+==================================
+
+File Existence:
+  EXISTS ✓
+
+Line Count:
+  63 lines (requirement: 50-90) ✓
+
+adapter.rs References:
+  5 occurrences (requirement: ≥2) ✓
+
+Forbidden Content Checks:
+  "NEVER push directly": 0 occurrences (requirement: 0) ✓
+  "cargo clippy": 0 occurrences (requirement: 0) ✓
+
+RESULT: PASS
+All QA checks passed. File meets all requirements.

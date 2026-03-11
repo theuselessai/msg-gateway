@@ -1,0 +1,27 @@
+=== Task 1: create_adapter signature change ===
+Date: Sun 08 Mar 2026 23:56:03 UTC
+
+--- cargo test ---
+test test_send_to_inactive_credential ... ok
+test test_send_to_nonexistent_credential ... ok
+test test_send_to_generic_with_file_ids_includes_file_urls ... ok
+test test_update_credential ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+
+     Running tests/ws_test.rs (target/debug/deps/ws_test-35e06ab840ed0c33)
+
+running 1 test
+test test_websocket_flow ... ignored, requires running server - run with --ignored flag
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests msg_gateway
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+--- cargo clippy ---
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.19s
