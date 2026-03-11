@@ -93,13 +93,14 @@ jobs:
             ${{ runner.os }}-cargo-
       
       - name: Build release
-        run: cargo build --release --verbose
+        run: cargo build --workspace --release --verbose
 
       - name: Upload plit-gw binary
         uses: actions/upload-artifact@v4
         with:
           name: plit-gw-binary
           path: target/release/plit-gw
+          if-no-files-found: error
           retention-days: 1
 
       - name: Upload plit binary
@@ -107,6 +108,7 @@ jobs:
         with:
           name: plit-binary
           path: target/release/plit
+          if-no-files-found: error
           retention-days: 1
 
   e2e:
@@ -122,8 +124,14 @@ jobs:
           name: plit-gw-binary
           path: target/release
 
-      - name: Make binary executable
-        run: chmod +x target/release/plit-gw
+      - name: Download plit binary
+        uses: actions/download-artifact@v4
+        with:
+          name: plit-binary
+          path: target/release
+
+      - name: Make binaries executable
+        run: chmod +x target/release/plit-gw target/release/plit
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
