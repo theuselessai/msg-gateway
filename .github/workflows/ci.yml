@@ -118,12 +118,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download binaries
+      - name: Download plit-gw binary
         uses: actions/download-artifact@v4
         with:
-          pattern: plit-*-binary
+          name: plit-gw-binary
           path: target/release
-          merge-multiple: true
+
+      - name: Download plit binary
+        uses: actions/download-artifact@v4
+        with:
+          name: plit-binary
+          path: target/release
 
       - name: Make binaries executable
         run: chmod +x target/release/plit-gw target/release/plit
