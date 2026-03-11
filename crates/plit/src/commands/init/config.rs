@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::Serialize;
 
+use super::prereqs::Environment;
 use super::prompts::UserInputs;
 use super::tokens::SharedTokens;
 use crate::output;
@@ -84,14 +85,13 @@ pub fn venv_dir() -> Result<PathBuf> {
     Ok(data_dir()?.join("venv"))
 }
 
-/// Write both config files. Creates directories as needed.
-pub fn write_configs(inputs: &UserInputs, tokens: &SharedTokens) -> Result<()> {
+pub fn write_configs(inputs: &UserInputs, tokens: &SharedTokens, env: &Environment) -> Result<()> {
     let cfg_dir = config_dir()?;
     std::fs::create_dir_all(&cfg_dir)
         .with_context(|| format!("Failed to create config directory: {}", cfg_dir.display()))?;
 
     write_gateway_config(inputs, tokens)?;
-    write_dot_env(inputs, tokens)?;
+    write_dot_env(inputs, tokens, env)?;
 
     Ok(())
 }
@@ -137,8 +137,7 @@ fn write_gateway_config(inputs: &UserInputs, tokens: &SharedTokens) -> Result<()
     Ok(())
 }
 
-/// Write `~/.config/plit/.env`.
-fn write_dot_env(inputs: &UserInputs, tokens: &SharedTokens) -> Result<()> {
+fn write_dot_env(inputs: &UserInputs, tokens: &SharedTokens, env: &Environment) -> Result<()> {
     let data = data_dir()?;
     let db_path = data.join("pipelit.db");
     let secret_key = uuid::Uuid::new_v4().to_string();
@@ -151,6 +150,9 @@ SECRET_KEY={secret_key}
 DEBUG=false
 ALLOWED_HOSTS=localhost,127.0.0.1
 
+# Sandbox
+SANDBOX_MODE={sandbox_mode}
+
 # Gateway integration
 GATEWAY_ENABLED=true
 GATEWAY_URL=http://localhost:{gw_port}
@@ -160,6 +162,7 @@ GATEWAY_INBOUND_TOKEN={inbound_token}
 ",
         db_path = db_path.display(),
         secret_key = secret_key,
+        sandbox_mode = env.sandbox_mode,
         gw_port = inputs.gateway_port,
         admin_token = tokens.admin_token,
         send_token = tokens.send_token,

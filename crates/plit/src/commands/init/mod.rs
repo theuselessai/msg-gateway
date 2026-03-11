@@ -48,7 +48,7 @@ pub async fn run() -> Result<()> {
     // 2. Check prerequisites
     // -----------------------------------------------------------------------
     output::status("Checking prerequisites...");
-    prereqs::check_all()?;
+    let env = prereqs::check_all()?;
     output::status("");
 
     // -----------------------------------------------------------------------
@@ -96,7 +96,7 @@ pub async fn run() -> Result<()> {
     // 6. Write config files (.env first — needed for migrations)
     // -----------------------------------------------------------------------
     output::status("Writing configuration files...");
-    config::write_configs(&inputs, &shared_tokens)?;
+    config::write_configs(&inputs, &shared_tokens, &env)?;
     output::status("");
 
     // -----------------------------------------------------------------------
