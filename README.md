@@ -26,7 +26,7 @@ A standalone Rust message gateway that bridges user-facing communication protoco
 - **Health monitoring** — Emergency alerts when backend is unreachable
 - **Hot reload** — Config and guardrail changes apply without restart
 - **Admin API** — CRUD operations for credentials
-- **`gw-cli` CLI tool** — Unix-philosophy command-line client for chat, admin, and agent integration
+- **`plit` CLI tool** — Pipelit ecosystem CLI for chat, admin, and agent integration
 
 ## Quick Start
 
@@ -39,7 +39,7 @@ cp config.example.json config.json
 # Edit config.json with your credentials
 
 # Run
-GATEWAY_CONFIG=config.json ./target/release/gw-server
+GATEWAY_CONFIG=config.json ./target/release/plit-gw
 ```
 
 ## Configuration
@@ -243,15 +243,15 @@ Point `guardrails_dir` at a directory of rule files:
 
 If `guardrails_dir` is omitted and a `guardrails/` directory exists next to `config.json`, it's picked up automatically.
 
-## CLI Tool (`gw-cli`)
+## CLI Tool (`plit`)
 
 A standalone command-line client for interacting with the gateway. Supports interactive chat, one-shot messaging, WebSocket streaming, credential management, and health checks. Backend-agnostic — works with Pipelit, OpenCode, or any external backend.
 
 ### Install
 
 ```bash
-cargo build --release -p gw-cli
-# Binary at target/release/gw-cli
+cargo build --release -p plit
+# Binary at target/release/plit
 ```
 
 ### Usage
@@ -262,24 +262,24 @@ export GATEWAY_URL=http://localhost:8080
 export GATEWAY_TOKEN=my-credential-token
 
 # Interactive chat REPL
-gw-cli chat my_credential --chat-id session-1
+plit chat my_credential --chat-id session-1
 
 # One-shot send (pipe-friendly)
-gw-cli send my_credential --chat-id session-1 --text "Hello"
-echo "Hello" | gw-cli send my_credential --chat-id session-1
+plit send my_credential --chat-id session-1 --text "Hello"
+echo "Hello" | plit send my_credential --chat-id session-1
 
 # Stream responses as JSONL (for agents, scripts, jq)
-gw-cli listen my_credential --chat-id session-1
+plit listen my_credential --chat-id session-1
 
 # Health check
-gw-cli health
+plit health
 
 # Credential management (requires GATEWAY_ADMIN_TOKEN)
-gw-cli credentials list --admin-token my-admin-token
-gw-cli credentials create my_cred --adapter generic --token secret \
+plit credentials list --admin-token my-admin-token
+plit credentials create my_cred --adapter generic --token secret \
   --backend pipelit --route '{"workflow_slug":"my-wf","trigger_node_id":"node_1"}'
-gw-cli credentials activate my_cred
-gw-cli credentials deactivate my_cred
+plit credentials activate my_cred
+plit credentials deactivate my_cred
 ```
 
 ### Output Modes

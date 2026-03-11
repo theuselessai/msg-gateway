@@ -1,4 +1,4 @@
-//! `gw-cli health` — check gateway health status.
+//! `plit health` — check gateway health status.
 
 use anyhow::Result;
 

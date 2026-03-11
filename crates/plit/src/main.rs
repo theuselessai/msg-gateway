@@ -4,12 +4,12 @@ mod client;
 mod commands;
 mod output;
 
-/// gw-cli — CLI tool for msg-gateway
+/// plit — Pipelit ecosystem CLI for msg-gateway
 ///
 /// Send and receive messages, manage credentials, and check health.
 /// Talks to the gateway's generic adapter interface — works with any backend.
 #[derive(Parser)]
-#[command(name = "gw-cli", version, about)]
+#[command(name = "plit", version, about)]
 struct Cli {
     /// Gateway URL
     #[arg(

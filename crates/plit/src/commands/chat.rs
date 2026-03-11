@@ -1,4 +1,4 @@
-//! `gw-cli chat` — interactive REPL combining send + listen.
+//! `plit chat` — interactive REPL combining send + listen.
 //!
 //! Connects WebSocket first, then reads user input line by line,
 //! sends each line as a chat message, and displays responses as they arrive.

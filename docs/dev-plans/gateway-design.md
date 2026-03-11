@@ -579,10 +579,10 @@ gw.credentials.activate("holly_telegram")
 ## 14. CLI Tool
 
 ```bash
-gw-cli credentials list
-gw-cli credentials create --adapter telegram --token $TOKEN --route '{"workflow_id":"wf_abc"}'
-gw-cli send --credential yao_telegram --chat 123456 --text "test"
-gw-cli health
+plit credentials list
+plit credentials create --adapter telegram --token $TOKEN --route '{"workflow_id":"wf_abc"}'
+plit send --credential yao_telegram --chat 123456 --text "test"
+plit health
 ```
 
 ## 15. Open Questions

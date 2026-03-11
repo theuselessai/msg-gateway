@@ -34,7 +34,7 @@ msg-gateway/
 ├── Cargo.toml              # Workspace root + gateway crate
 ├── src/                    # Gateway binary + library
 └── crates/
-    └── gw-cli/             # CLI tool binary (`gw-cli`)
+    └── plit/               # CLI tool binary (`plit`)
         ├── Cargo.toml
         └── src/
             ├── main.rs     # clap entry point
@@ -63,7 +63,7 @@ msg-gateway/
 | `src/admin.rs` | Admin API CRUD |
 | `src/error.rs` | Error types |
 
-### CLI Tool (`crates/gw-cli/`)
+### CLI Tool (`crates/plit/`)
 
 | File | Purpose |
 |------|---------|
@@ -83,7 +83,7 @@ msg-gateway/
 cargo build --release
 
 # Build just the CLI
-cargo build --release -p gw-cli
+cargo build --release -p plit
 
 # Run tests
 cargo test
@@ -97,12 +97,12 @@ cargo clippy --all-targets --all-features -- -D warnings
 # Format (workspace-wide)
 cargo fmt --all
 
-# Run the gateway (binary: gw-server)
+# Run the gateway (binary: plit-gw)
 GATEWAY_CONFIG=config.json cargo run
 
-# Run the CLI (binary: gw-cli)
-cargo run -p gw-cli -- --help
-cargo run -p gw-cli -- chat my_cred --chat-id test --token my-token
+# Run the CLI (binary: plit)
+cargo run -p plit -- --help
+cargo run -p plit -- chat my_cred --chat-id test --token my-token
 ```
 
 ## Development Guidelines

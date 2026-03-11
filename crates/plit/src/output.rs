@@ -22,7 +22,7 @@ pub fn print_result<T: Serialize + std::fmt::Debug>(value: &T, json_output: bool
     }
 }
 
-/// Print a single JSONL line (for streaming output like `gw listen`).
+/// Print a single JSONL line (for streaming output like `plit listen`).
 pub fn print_jsonl<T: Serialize>(value: &T) {
     println!(
         "{}",

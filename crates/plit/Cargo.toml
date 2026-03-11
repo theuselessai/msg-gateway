@@ -1,11 +1,11 @@
 [package]
-name = "gw-cli"
+name = "plit"
 version = "0.1.0"
 edition = "2024"
-description = "CLI tool for msg-gateway — chat, admin, and health commands"
+description = "Pipelit ecosystem CLI — chat, admin, and health commands for msg-gateway"
 
 [[bin]]
-name = "gw-cli"
+name = "plit"
 path = "src/main.rs"
 
 [dependencies]
