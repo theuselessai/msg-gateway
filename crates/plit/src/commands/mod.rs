@@ -1,6 +1,7 @@
 pub mod chat;
 pub mod credentials;
 pub mod health;
+pub mod init;
 pub mod listen;
 pub mod send;
 

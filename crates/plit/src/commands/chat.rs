@@ -110,10 +110,10 @@ pub async fn run(ctx: &Context, credential_id: &str, chat_id: &str, user_id: &st
     cancel.cancel();
     match tokio::time::timeout(WS_DRAIN_TIMEOUT, ws_task).await {
         Ok(result) => {
-            if let Err(e) = result {
-                if !e.is_cancelled() {
-                    output::error(&format!("WebSocket task error: {}", e));
-                }
+            if let Err(e) = result
+                && !e.is_cancelled()
+            {
+                output::error(&format!("WebSocket task error: {}", e));
             }
         }
         Err(_) => {

@@ -86,6 +86,9 @@ enum Commands {
 
     /// Check gateway health
     Health,
+
+    /// Interactive setup wizard — bootstrap Pipelit + Gateway from scratch
+    Init,
 }
 
 #[derive(Subcommand)]
@@ -178,5 +181,7 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+
+        Commands::Init => commands::init::run().await,
     }
 }
