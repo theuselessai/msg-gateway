@@ -298,3 +298,24 @@ The gateway includes a CEL-based guardrail system for message filtering. Guardra
 - Hot-reload on file changes
 
 See README.md for detailed guardrail documentation.
+
+## Token Usage Tracking
+
+OpenCode stores session and token data in a SQLite database at `~/.local/share/opencode/opencode.db`. The `message` table contains a JSON `data` column with per-message token counts and cost.
+
+**Quick stats:** `opencode stats` (supports `--days`, `--models`, `--project` flags)
+
+**DB query for session totals:**
+```sql
+SELECT m.session_id, s.title,
+  SUM(json_extract(m.data, '$.tokens.input')) AS input_tokens,
+  SUM(json_extract(m.data, '$.tokens.output')) AS output_tokens,
+  SUM(json_extract(m.data, '$.tokens.cache.read')) AS cache_read,
+  SUM(json_extract(m.data, '$.tokens.cache.write')) AS cache_write
+FROM message m
+JOIN session s ON m.session_id = s.id
+WHERE json_extract(m.data, '$.role') = 'assistant'
+GROUP BY m.session_id;
+```
+
+**Note:** `cost` field is $0 on Claude Max subscriptions (flat-rate, no per-token billing). Token counts are still tracked.
