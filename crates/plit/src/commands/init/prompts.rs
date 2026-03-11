@@ -41,6 +41,10 @@ pub fn collect() -> Result<UserInputs> {
         .default("admin".to_string())
         .interact_text()?;
 
+    if admin_username.trim().is_empty() {
+        bail!("Admin username cannot be empty");
+    }
+
     let admin_password = Password::with_theme(&theme)
         .with_prompt("Admin password")
         .with_confirmation("Confirm password", "Passwords don't match")

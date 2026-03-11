@@ -131,6 +131,7 @@ fn write_gateway_config(inputs: &UserInputs, tokens: &SharedTokens) -> Result<()
     let json =
         serde_json::to_string_pretty(&config).context("Failed to serialize gateway config")?;
     std::fs::write(&path, &json).with_context(|| format!("Failed to write {}", path.display()))?;
+    restrict_permissions(&path)?;
 
     output::status(&format!("  ✓ Wrote {}", path.display()));
     Ok(())
@@ -168,7 +169,20 @@ GATEWAY_INBOUND_TOKEN={inbound_token}
     let path = dot_env_path()?;
     std::fs::write(&path, &content)
         .with_context(|| format!("Failed to write {}", path.display()))?;
+    restrict_permissions(&path)?;
 
     output::status(&format!("  ✓ Wrote {}", path.display()));
+    Ok(())
+}
+
+#[cfg(unix)]
+fn restrict_permissions(path: &std::path::Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("Failed to set permissions on {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn restrict_permissions(_path: &std::path::Path) -> Result<()> {
     Ok(())
 }

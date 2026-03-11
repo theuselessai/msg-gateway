@@ -76,13 +76,12 @@ fn check_binary(
     install_hint: &'static str,
 ) -> PrereqResult {
     match Command::new(name).args(version_args).output() {
-        Ok(output) => {
+        Ok(output) if output.status.success() => {
             let raw = if output.stdout.is_empty() {
                 String::from_utf8_lossy(&output.stderr).to_string()
             } else {
                 String::from_utf8_lossy(&output.stdout).to_string()
             };
-            // Extract first line and trim
             let version = raw.lines().next().unwrap_or("unknown").trim().to_string();
             PrereqResult {
                 name,
@@ -91,7 +90,7 @@ fn check_binary(
                 install_hint,
             }
         }
-        Err(_) => PrereqResult {
+        Ok(_) | Err(_) => PrereqResult {
             name,
             found: false,
             version: String::new(),
