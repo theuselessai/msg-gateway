@@ -122,8 +122,14 @@ jobs:
           name: plit-gw-binary
           path: target/release
 
-      - name: Make binary executable
-        run: chmod +x target/release/plit-gw
+      - name: Download plit binary
+        uses: actions/download-artifact@v4
+        with:
+          name: plit-binary
+          path: target/release
+
+      - name: Make binaries executable
+        run: chmod +x target/release/plit-gw target/release/plit
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
