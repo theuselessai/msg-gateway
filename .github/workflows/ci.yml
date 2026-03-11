@@ -100,6 +100,7 @@ jobs:
         with:
           name: plit-gw-binary
           path: target/release/plit-gw
+          if-no-files-found: error
           retention-days: 1
 
       - name: Upload plit binary
@@ -107,6 +108,7 @@ jobs:
         with:
           name: plit-binary
           path: target/release/plit
+          if-no-files-found: error
           retention-days: 1
 
   e2e:
@@ -116,17 +118,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download plit-gw binary
+      - name: Download binaries
         uses: actions/download-artifact@v4
         with:
-          name: plit-gw-binary
+          pattern: plit-*-binary
           path: target/release
-
-      - name: Download plit binary
-        uses: actions/download-artifact@v4
-        with:
-          name: plit-binary
-          path: target/release
+          merge-multiple: true
 
       - name: Make binaries executable
         run: chmod +x target/release/plit-gw target/release/plit
