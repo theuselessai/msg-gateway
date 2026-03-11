@@ -87,7 +87,7 @@ msg-gateway is the unified messaging layer for Pipelit and other LLM-based appli
 | 2 | Pipelit unified inbound endpoint | P0 | Pipelit #134 | ✅ Done (Pipelit PR #135, merged Mar 11 2026) |
 | 3 | Protocol verification & E2E testing | P0 | #8 | ✅ Done (manual + integration verified) |
 
-Dev plan: [`docs/dev-plans/gw-cli.md`](dev-plans/gw-cli.md)
+Dev plan: [`docs/dev-plans/plit.md`](dev-plans/plit.md)
 
 ## v0.4.0 - Adapters & Distribution (Target: Jul 2026)
 
