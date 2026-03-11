@@ -195,12 +195,12 @@ adapters/telegram/
 
 ### 5.2 CLI
 
-- [ ] `gw-cli` command
+- [ ] `plit` command
 - [ ] `credentials list|create|activate|deactivate|delete`
 - [ ] `send --credential --chat --text`
 - [ ] `health`
 
-**Milestone:** `gw-cli send` delivers a message.
+**Milestone:** `plit send` delivers a message.
 
 ---
 

@@ -26,7 +26,7 @@ msg-gateway is the unified messaging layer for Pipelit and other LLM-based appli
 - CEL-based message guardrails with hot-reload
 - OpenCode SSE response delivery + file attachments
 - External backend subprocess protocol
-- `gw-cli` command-line client
+- `plit` command-line client
 
 ### v0.3.0
 - Full Pipelit integration — gateway is Pipelit's unified messaging layer (Pipelit PR #135)
@@ -83,7 +83,7 @@ msg-gateway is the unified messaging layer for Pipelit and other LLM-based appli
 
 | Order | Task | Priority | Related | Status |
 |-------|------|----------|---------|--------|
-| 1 | `gw-cli` — project setup, client, commands, REPL | P0 | #43 | ✅ Done (shipped in v0.2.0) |
+| 1 | `plit` — project setup, client, commands, REPL | P0 | #43 | ✅ Done (shipped in v0.2.0) |
 | 2 | Pipelit unified inbound endpoint | P0 | Pipelit #134 | ✅ Done (Pipelit PR #135, merged Mar 11 2026) |
 | 3 | Protocol verification & E2E testing | P0 | #8 | ✅ Done (manual + integration verified) |
 
@@ -96,9 +96,9 @@ Dev plan: [`docs/dev-plans/gw-cli.md`](dev-plans/gw-cli.md)
 | Order | Issue | Task | Priority | Status |
 |-------|-------|------|----------|--------|
 | 1 | #34 | Full OpenCode server mode integration | P1 | Planned |
-| 2 | #44 | Publish to crates.io (`cargo install gw-server` / `gw-cli`) | P2 | Planned |
+| 2 | #44 | Publish to crates.io (`cargo install plit-gw` / `plit`) | P2 | Planned |
 | 3 | #45 | Separate adapters/backends into standalone repos | P2 | Planned |
-| 4 | #46 | `gw-cli install` — adapter/backend plugin management | P2 | Planned |
+| 4 | #46 | `plit install` — adapter/backend plugin management | P2 | Planned |
 | 5 | #9 | Discord adapter | P2 | Planned |
 | 6 | #10 | Slack adapter | P2 | Planned |
 | 7 | #11 | Email adapter | P2 | Planned |

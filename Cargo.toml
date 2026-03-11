@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/gw-cli"]
+members = ["crates/plit"]
 
 [package]
 name = "msg-gateway"
@@ -11,7 +11,7 @@ name = "msg_gateway"
 path = "src/lib.rs"
 
 [[bin]]
-name = "gw-server"
+name = "plit-gw"
 path = "src/main.rs"
 
 [dependencies]

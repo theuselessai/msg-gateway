@@ -1,4 +1,4 @@
-# `gw-cli` CLI Tool — Development Plan
+# `plit` CLI Tool — Development Plan
 
 **Status:** Ready
 **Blocked by:** None (gateway API endpoints all exist)
@@ -8,7 +8,7 @@
 
 ## Summary
 
-A standalone Rust CLI binary (`gw-cli`) for interacting with the msg-gateway. The gateway server binary is `gw-server`. Supports interactive chat, one-shot message sending, WebSocket listening, credential management, and health checks. Designed as a unix-philosophy tool: pipe-friendly, JSON-native, and usable by both humans and AI agents.
+A standalone Rust CLI binary (`plit`) for interacting with the msg-gateway. The gateway server binary is `plit-gw`. Supports interactive chat, one-shot message sending, WebSocket listening, credential management, and health checks. Designed as a unix-philosophy tool: pipe-friendly, JSON-native, and usable by both humans and AI agents.
 
 ## Requirements
 
@@ -25,40 +25,40 @@ These commands work regardless of what backend the credential is routed to — t
 
 ```bash
 # Interactive REPL — connect WS + send loop
-gw-cli chat <credential_id> --chat-id <id>
+plit chat <credential_id> --chat-id <id>
 
 # One-shot send (pipe-friendly)
-gw-cli send <credential_id> --chat-id <id> --text "hello"
-echo "hello" | gw-cli send <credential_id> --chat-id <id>
-gw-cli send <credential_id> --chat-id <id> < message.txt
+plit send <credential_id> --chat-id <id> --text "hello"
+echo "hello" | plit send <credential_id> --chat-id <id>
+plit send <credential_id> --chat-id <id> < message.txt
 
 # Listen only — stream JSONL to stdout
-gw-cli listen <credential_id> --chat-id <id>
+plit listen <credential_id> --chat-id <id>
 ```
 
 ### Admin Commands
 
 ```bash
 # Credential management
-gw-cli credentials list
-gw-cli credentials create <id> --adapter <type> --token <tok> \
+plit credentials list
+plit credentials create <id> --adapter <type> --token <tok> \
   --backend <name> --route '{"workflow_slug":"...","trigger_node_id":"..."}'
-gw-cli credentials activate <id>
-gw-cli credentials deactivate <id>
+plit credentials activate <id>
+plit credentials deactivate <id>
 
 # Health check
-gw-cli health
+plit health
 ```
 
 ### I/O Behavior
 
 | Mode | stdin | stdout | stderr | Exit code |
 |------|-------|--------|--------|-----------|
-| `gw-cli chat` | interactive input | formatted responses | connection status | 0 |
-| `gw-cli send` | reads text if no `--text` | JSON result | errors | 0/1 |
-| `gw-cli listen` | — | JSONL stream (one msg per line) | connection status | 0/1 |
-| `gw-cli credentials list` | — | JSON array | errors | 0/1 |
-| `gw-cli health` | — | JSON status | errors | 0/1 |
+| `plit chat` | interactive input | formatted responses | connection status | 0 |
+| `plit send` | reads text if no `--text` | JSON result | errors | 0/1 |
+| `plit listen` | — | JSONL stream (one msg per line) | connection status | 0/1 |
+| `plit credentials list` | — | JSON array | errors | 0/1 |
+| `plit health` | — | JSON status | errors | 0/1 |
 
 ### Global Flags
 
@@ -78,11 +78,11 @@ gw-cli health
 The CLI is purely a gateway client. It doesn't know about backends (Pipelit, OpenCode, etc.).
 
 ```
-gw-cli send → POST /api/v1/chat/{credential_id}       → Gateway routes to backend
-gw-cli listen → WS /ws/chat/{credential_id}/{chat_id}  → Gateway pushes responses
-gw-cli chat  → send + listen combined in interactive REPL
-gw-cli credentials → /admin/credentials/*              → Gateway admin API
-gw-cli health → GET /health                            → Gateway health endpoint
+plit send → POST /api/v1/chat/{credential_id}       → Gateway routes to backend
+plit listen → WS /ws/chat/{credential_id}/{chat_id}  → Gateway pushes responses
+plit chat  → send + listen combined in interactive REPL
+plit credentials → /admin/credentials/*              → Gateway admin API
+plit health → GET /health                            → Gateway health endpoint
 ```
 
 ### Auth Flow
@@ -101,9 +101,9 @@ gw-cli health → GET /health                            → Gateway health endp
 
 ```
 msg-gateway/
-├── Cargo.toml              # workspace root (add gw-cli member)
+├── Cargo.toml              # workspace root (add plit member)
 ├── crates/
-│   └── gw-cli/
+│   └── plit/
 │       ├── Cargo.toml      # binary crate
 │       └── src/
 │           ├── main.rs     # clap entry point
@@ -136,7 +136,7 @@ msg-gateway/
 
 ### Phase 1 — Project Setup & Client Foundation
 
-- [ ] Create workspace layout (`Cargo.toml` workspace, `crates/gw-cli/`)
+- [ ] Create workspace layout (`Cargo.toml` workspace, `crates/plit/`)
 - [ ] Set up `clap` with subcommands skeleton
 - [ ] Implement `client.rs` — HTTP client for gateway API
   - `send_chat_message(credential_id, chat_id, text, token)` → POST /api/v1/chat/{cred}
@@ -150,24 +150,24 @@ msg-gateway/
 
 ### Phase 2 — Core Commands
 
-- [ ] `gw-cli send` — one-shot message send
+- [ ] `plit send` — one-shot message send
   - Read from `--text` flag or stdin
   - POST to generic chat endpoint
   - Print JSON result to stdout
   - Proper exit codes
-- [ ] `gw-cli listen` — WebSocket stream
+- [ ] `plit listen` — WebSocket stream
   - Connect to WS endpoint with auth
   - Stream JSONL to stdout (one `WsOutboundMessage` per line)
   - Auto-reconnect on disconnect (with backoff)
   - Clean shutdown on SIGINT/SIGTERM
-- [ ] `gw-cli health` — health check
+- [ ] `plit health` — health check
   - GET /health
   - Print JSON status
   - Exit 0 if healthy, 1 if unhealthy
 
 ### Phase 3 — Interactive Chat
 
-- [ ] `gw-cli chat` — interactive REPL
+- [ ] `plit chat` — interactive REPL
   - Connect WebSocket first (listen for responses)
   - Read user input line by line
   - POST each line as chat message
@@ -178,17 +178,17 @@ msg-gateway/
 
 ### Phase 4 — Admin Commands
 
-- [ ] `gw-cli credentials list` — list all credentials (JSON table)
-- [ ] `gw-cli credentials create` — create credential with all fields
+- [ ] `plit credentials list` — list all credentials (JSON table)
+- [ ] `plit credentials create` — create credential with all fields
   - `--route` accepts JSON string
   - `--config` accepts JSON string (optional)
   - `--backend` names which backend to route to
-- [ ] `gw-cli credentials activate <id>` — activate credential
-- [ ] `gw-cli credentials deactivate <id>` — deactivate credential
+- [ ] `plit credentials activate <id>` — activate credential
+- [ ] `plit credentials deactivate <id>` — deactivate credential
 
 ### Phase 5 — Polish
 
-- [ ] CI integration (build gw-cli in existing workflow)
+- [ ] CI integration (build plit in existing workflow)
 - [ ] Man page / `--help` examples
 - [ ] Shell completion generation (clap feature)
 - [ ] Config file support (optional: `~/.config/gw/config.toml`)
@@ -204,30 +204,30 @@ export GATEWAY_TOKEN=my-credential-token
 export GATEWAY_ADMIN_TOKEN=my-admin-token
 
 # Check gateway is running
-gw-cli health
+plit health
 
 # Interactive chat with a Pipelit workflow
-gw-cli chat my_chat --chat-id test-session-1
+plit chat my_chat --chat-id test-session-1
 
 # One-shot send (useful in scripts)
-gw-cli send my_chat --chat-id test-1 --text "Run the analysis workflow"
+plit send my_chat --chat-id test-1 --text "Run the analysis workflow"
 
 # Listen for responses (pipe to jq for pretty printing)
-gw-cli listen my_chat --chat-id test-1 | jq .
+plit listen my_chat --chat-id test-1 | jq .
 
 # Pipe input from file
-cat prompt.txt | gw-cli send my_chat --chat-id test-1
+cat prompt.txt | plit send my_chat --chat-id test-1
 ```
 
 ### Agent Usage (AI agent calling gw as a tool)
 
 ```bash
 # Send and capture message ID
-RESULT=$(gw-cli send my_chat --chat-id session-1 --text "analyze this data" --json)
+RESULT=$(plit send my_chat --chat-id session-1 --text "analyze this data" --json)
 echo $RESULT  # {"message_id":"generic_xxx","timestamp":"..."}
 
 # Stream responses as JSONL (agent reads line by line)
-gw-cli listen my_chat --chat-id session-1 --json
+plit listen my_chat --chat-id session-1 --json
 # {"text":"Processing...","timestamp":"...","message_id":"...","file_urls":[]}
 # {"text":"Analysis complete.","timestamp":"...","message_id":"...","file_urls":["http://..."]}
 ```
@@ -236,17 +236,17 @@ gw-cli listen my_chat --chat-id session-1 --json
 
 ```bash
 # Create a credential for a new workflow
-gw-cli credentials create prod_workflow \
+plit credentials create prod_workflow \
   --adapter generic \
   --backend pipelit \
   --token "$(openssl rand -hex 32)" \
   --route '{"workflow_slug":"production-pipeline","trigger_node_id":"node_entry"}'
 
 # Activate it
-gw-cli credentials activate prod_workflow
+plit credentials activate prod_workflow
 
 # List all credentials
-gw-cli credentials list | jq '.[] | select(.active == true)'
+plit credentials list | jq '.[] | select(.active == true)'
 ```
 
 ## Non-Goals
@@ -258,8 +258,8 @@ gw-cli credentials list | jq '.[] | select(.active == true)'
 
 ## Success Criteria
 
-1. `gw-cli send` + `gw-cli listen` can round-trip a message through gateway → Pipelit → gateway
-2. `gw-cli chat` provides interactive experience comparable to a chat client
-3. `echo "hello" | gw-cli send ... | jq .` works end-to-end (pipe-friendly)
-4. `gw-cli listen ... | while read line; do ... done` works for agent consumption
+1. `plit send` + `plit listen` can round-trip a message through gateway → Pipelit → gateway
+2. `plit chat` provides interactive experience comparable to a chat client
+3. `echo "hello" | plit send ... | jq .` works end-to-end (pipe-friendly)
+4. `plit listen ... | while read line; do ... done` works for agent consumption
 5. All commands exit 0 on success, 1 on failure, with errors on stderr
