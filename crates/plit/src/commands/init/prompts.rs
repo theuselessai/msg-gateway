@@ -142,12 +142,6 @@ fn validate_redis(url: &str) -> Result<()> {
 
     let host = if host.is_empty() { "localhost" } else { host };
 
-    if is_tls {
-        bail!(
-            "TLS Redis (rediss://) is not supported for validation — only checking reachability via plain TCP"
-        );
-    }
-
     let addr = format!("{}:{}", host, port);
 
     let socket_addr = addr
@@ -158,6 +152,13 @@ fn validate_redis(url: &str) -> Result<()> {
 
     let mut stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(3))
         .context("Could not connect to Redis")?;
+
+    if is_tls {
+        // TLS — can't do PING/PONG without a TLS handshake, but TCP connect
+        // succeeded so the server is listening on this port.
+        drop(stream);
+        return Ok(());
+    }
 
     stream.set_read_timeout(Some(Duration::from_secs(3)))?;
     stream.set_write_timeout(Some(Duration::from_secs(3)))?;
