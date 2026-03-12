@@ -69,7 +69,7 @@ pub async fn install_deps() -> Result<()> {
     let venv_dir = config::venv_dir()?;
     let pipelit_dir = config::pipelit_dir()?;
     let pip = venv_dir.join("bin").join("pip");
-    let requirements = pipelit_dir.join("requirements.txt");
+    let requirements = pipelit_dir.join("platform").join("requirements.txt");
 
     if !requirements.exists() {
         bail!(
