@@ -6,7 +6,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 use crate::output;
 
@@ -32,21 +32,25 @@ pub fn check_all() -> Result<Environment> {
     let checks = vec![
         check_binary(
             "python3",
+            "python3",
             &["--version"],
             "Install Python 3: https://www.python.org/downloads/ or `sudo apt install python3`",
         ),
         check_binary(
-            "pip3",
-            &["--version"],
-            "Install pip3: `sudo apt install python3-pip` or `python3 -m ensurepip`",
+            "python3-venv",
+            "python3",
+            &["-m", "venv", "-h"],
+            "Install venv module: `sudo apt install python3-venv`",
         ),
         check_binary(
+            "redis-server",
             "redis-server",
             &["--version"],
             "Install Redis: build from source (`make && make install PREFIX=~/.local`), \
              or use DragonflyDB, or `podman run -d -p 6379:6379 redis`",
         ),
         check_binary(
+            "git",
             "git",
             &["--version"],
             "Install git: https://git-scm.com/downloads or `sudo apt install git`",
@@ -161,10 +165,11 @@ fn detect_container() -> Option<String> {
 /// Check if a binary is available and capture its version string.
 fn check_binary(
     name: &'static str,
+    cmd: &str,
     version_args: &[&str],
     install_hint: &'static str,
 ) -> PrereqResult {
-    match Command::new(name).args(version_args).output() {
+    match Command::new(cmd).args(version_args).output() {
         Ok(output) if output.status.success() => {
             let raw = if output.stdout.is_empty() {
                 String::from_utf8_lossy(&output.stderr).to_string()
