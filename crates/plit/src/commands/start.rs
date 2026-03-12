@@ -66,9 +66,8 @@ pub async fn run(dev: bool) -> Result<()> {
         .arg(&procfile_path)
         .args(["-e"])
         .arg(&env_path)
-        .args(["-d"])
-        .arg(&platform_dir)
         .arg("start")
+        .current_dir(&platform_dir)
         .spawn()
         .context("Failed to start honcho")?;
 
