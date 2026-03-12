@@ -99,6 +99,9 @@ enum Commands {
 
     /// Stop the running plit stack
     Stop,
+
+    /// Remove all plit data, config, and Pipelit clone
+    Uninstall,
 }
 
 #[derive(Subcommand)]
@@ -197,5 +200,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Start { dev } => commands::start::run(dev).await,
 
         Commands::Stop => commands::stop::run(),
+
+        Commands::Uninstall => commands::uninstall::run(),
     }
 }
