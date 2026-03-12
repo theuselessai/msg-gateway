@@ -84,7 +84,10 @@ fn prompt_port(theme: &ColorfulTheme, label: &str, default: u16) -> Result<u16> 
             .interact_text()?;
 
         match TcpListener::bind(("127.0.0.1", port)) {
-            Ok(_) => return Ok(port),
+            Ok(listener) => {
+                drop(listener);
+                return Ok(port);
+            }
             Err(_) => {
                 output::error(&format!("Port {} is already in use", port));
             }
@@ -169,7 +172,7 @@ fn validate_redis(url: &str) -> Result<()> {
     let n = stream.read(&mut buf)?;
     let response = String::from_utf8_lossy(&buf[..n]);
 
-    if response.contains("+PONG") {
+    if response.starts_with("+PONG") {
         Ok(())
     } else {
         bail!("Unexpected response: {}", response.trim())
