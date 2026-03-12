@@ -4,6 +4,9 @@ pub mod health;
 pub mod init;
 pub mod listen;
 pub mod send;
+pub mod start;
+pub mod stop;
+pub mod uninstall;
 
 /// Shared context passed to all commands.
 pub struct Context {
