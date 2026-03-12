@@ -1,4 +1,4 @@
-mod config;
+pub(crate) mod config;
 mod install;
 mod prereqs;
 mod prompts;

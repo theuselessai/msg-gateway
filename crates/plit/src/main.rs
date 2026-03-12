@@ -89,6 +89,16 @@ enum Commands {
 
     /// Interactive setup wizard — bootstrap Pipelit + Gateway from scratch
     Init,
+
+    /// Start the plit stack (gateway + Pipelit + workers)
+    Start {
+        /// Include frontend dev server with hot reload
+        #[arg(long)]
+        dev: bool,
+    },
+
+    /// Stop the running plit stack
+    Stop,
 }
 
 #[derive(Subcommand)]
@@ -183,5 +193,9 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Init => commands::init::run().await,
+
+        Commands::Start { dev } => commands::start::run(dev).await,
+
+        Commands::Stop => commands::stop::run(),
     }
 }
