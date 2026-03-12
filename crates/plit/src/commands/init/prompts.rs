@@ -134,7 +134,22 @@ fn validate_redis(url: &str) -> Result<()> {
     // Strip ?query parameters
     let host_port = host_port.split('?').next().unwrap_or(host_port);
 
-    let (host, port) = if let Some((h, p)) = host_port.rsplit_once(':') {
+    let (host, port) = if host_port.starts_with('[') {
+        // IPv6: [::1]:6379 or [::1]
+        if let Some((bracket_host, rest)) = host_port.split_once(']') {
+            let h = &bracket_host[1..]; // strip leading '['
+            let port = if let Some(port_str) = rest.strip_prefix(':') {
+                port_str
+                    .parse::<u16>()
+                    .with_context(|| format!("Invalid port number: {}", port_str))?
+            } else {
+                6379
+            };
+            (h, port)
+        } else {
+            bail!("Malformed IPv6 address in Redis URL: {}", host_port);
+        }
+    } else if let Some((h, p)) = host_port.rsplit_once(':') {
         let port = p
             .parse::<u16>()
             .with_context(|| format!("Invalid port number: {}", p))?;
@@ -231,13 +246,7 @@ async fn prompt_llm_config(theme: &ColorfulTheme) -> Result<(String, String, Str
                 .interact()?
         };
 
-        if let Some(env_name) = adapter_kind.default_key_env_name()
-            && !api_key.is_empty()
-        {
-            unsafe { std::env::set_var(env_name, &api_key) };
-        }
-
-        match fetch_models(adapter_kind).await {
+        match fetch_models(adapter_kind, &api_key).await {
             Ok(models) if models.is_empty() => {
                 let model: String = Input::with_theme(theme)
                     .with_prompt("Model name (no models found, enter manually)")
@@ -280,8 +289,17 @@ fn provider_to_adapter_kind(provider: &str) -> AdapterKind {
     }
 }
 
-async fn fetch_models(adapter_kind: AdapterKind) -> Result<Vec<String>> {
-    let client = genai::Client::default();
+async fn fetch_models(adapter_kind: AdapterKind, api_key: &str) -> Result<Vec<String>> {
+    let client = if api_key.is_empty() {
+        genai::Client::default()
+    } else {
+        let key = api_key.to_string();
+        genai::Client::builder()
+            .with_auth_resolver_fn(move |_| {
+                Ok(Some(genai::resolver::AuthData::from_single(key.clone())))
+            })
+            .build()
+    };
     client
         .all_model_names(adapter_kind)
         .await

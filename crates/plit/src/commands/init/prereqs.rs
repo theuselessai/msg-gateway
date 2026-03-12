@@ -100,7 +100,7 @@ pub fn check_all() -> Result<Environment> {
 /// - Binary not found → show install instructions and bail
 fn detect_sandbox_mode() -> Result<String> {
     match Command::new("bwrap")
-        .args(["--ro-bind", "/", "/", "true"])
+        .args(["--ro-bind", "/", "/", "/bin/true"])
         .output()
     {
         Ok(out) if out.status.success() => {
