@@ -142,13 +142,14 @@ pub async fn run_cli_setup(
     cmd.args(["-m", "cli", "setup"])
         .arg("--username")
         .arg(&inputs.admin_username)
+        .arg("--password")
+        .arg(&inputs.admin_password)
         .arg("--sandbox-mode")
         .arg(&env.sandbox_mode)
         .arg("--redis-url")
         .arg(&inputs.redis_url)
         .arg("--platform-base-url")
         .arg(&inputs.platform_base_url)
-        .env("PIPELIT_SETUP_PASSWORD", &inputs.admin_password)
         .current_dir(pipelit_dir.join("platform"));
 
     for (key, value) in &env_vars {
@@ -193,9 +194,10 @@ pub async fn run_apply_fixture(
         .arg(&inputs.llm_provider)
         .arg("--model")
         .arg(&inputs.llm_model)
+        .arg("--api-key")
+        .arg(&inputs.llm_api_key)
         .arg("--base-url")
         .arg(&inputs.llm_base_url)
-        .env("PIPELIT_LLM_API_KEY", &inputs.llm_api_key)
         .current_dir(pipelit_dir.join("platform"));
 
     for (key, value) in &env_vars {
