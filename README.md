@@ -5,6 +5,7 @@
 </p>
 
 <p align="center">
+  <a href="https://crates.io/crates/plit"><img src="https://img.shields.io/crates/v/plit.svg?style=flat-square" alt="crates.io" /></a>
   <a href="https://github.com/theuselessai/msg-gateway/actions/workflows/ci.yml"><img src="https://github.com/theuselessai/msg-gateway/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://app.codecov.io/gh/theuselessai/msg-gateway"><img alt="Codecov" src="https://img.shields.io/codecov/c/github/theuselessai/msg-gateway?style=flat-square"></a>
   <a href="https://github.com/theuselessai/msg-gateway/releases"><img src="https://img.shields.io/github/v/tag/theuselessai/msg-gateway?label=version&style=flat-square" alt="Version" /></a>
@@ -31,14 +32,30 @@ A standalone Rust message gateway that bridges user-facing communication protoco
 ## Quick Start
 
 ```bash
-# Build
+# Install
+cargo install plit
+
+# Bootstrap (interactive — sets up Pipelit, LLM provider, credentials)
+plit init
+
+# Launch the full stack
+plit start
+
+# Chat with your AI agent
+plit chat default_agent --chat-id my-session
+```
+
+### Manual Setup (advanced)
+
+```bash
+# Build from source
 cargo build --release
 
 # Configure
 cp config.example.json config.json
 # Edit config.json with your credentials
 
-# Run
+# Run gateway only
 GATEWAY_CONFIG=config.json ./target/release/plit-gw
 ```
 

@@ -3,8 +3,13 @@ members = ["crates/plit"]
 
 [package]
 name = "msg-gateway"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
+description = "Multi-protocol message gateway for AI agents — bridges Telegram, Discord, Slack, Email to Pipelit and other backends"
+license = "Apache-2.0"
+repository = "https://github.com/theuselessai/msg-gateway"
+keywords = ["gateway", "messaging", "ai", "agent", "pipelit"]
+categories = ["network-programming", "web-programming"]
 
 [lib]
 name = "msg_gateway"

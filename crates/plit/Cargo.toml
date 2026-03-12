@@ -1,14 +1,25 @@
 [package]
 name = "plit"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
-description = "Pipelit ecosystem CLI — chat, admin, and health commands for msg-gateway"
+description = "Pipelit ecosystem CLI and gateway — install, start, and chat with AI agents"
+license = "Apache-2.0"
+repository = "https://github.com/theuselessai/msg-gateway"
+keywords = ["ai", "agent", "gateway", "pipelit", "cli"]
+categories = ["command-line-utilities", "network-programming"]
 
 [[bin]]
 name = "plit"
 path = "src/main.rs"
 
+[[bin]]
+name = "plit-gw"
+path = "src/gw_main.rs"
+
 [dependencies]
+# Gateway server
+msg-gateway = { path = "../..", version = "0.3.0" }
+
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
 

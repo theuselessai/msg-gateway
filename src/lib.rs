@@ -1,6 +1,7 @@
 //! msg-gateway library
 //!
-//! This module exposes the gateway components for integration testing.
+//! Multi-protocol message gateway bridging user protocols (Telegram, Discord,
+//! Slack, Email, Generic HTTP/WS) to backend agent protocols (Pipelit, OpenCode).
 
 pub mod adapter;
 pub mod admin;
@@ -15,3 +16,211 @@ pub mod manager;
 pub mod message;
 pub mod server;
 pub mod watcher;
+
+use std::sync::Arc;
+use std::time::Duration;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use crate::adapter::AdapterInstanceManager;
+use crate::backend::ExternalBackendManager;
+use crate::config::BackendProtocol;
+use crate::manager::CredentialManager;
+
+pub async fn run() -> anyhow::Result<()> {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "msg_gateway=debug,tower_http=debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
+    tracing::info!("Starting msg-gateway");
+
+    let config_path = config::resolve_config_path();
+
+    let config_path_str = config_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Config path contains invalid UTF-8"))?;
+
+    let config = config::load_config(config_path_str)?;
+    tracing::info!(listen = %config.gateway.listen, "Configuration loaded");
+
+    let adapter_manager = Arc::new(AdapterInstanceManager::new(
+        config.gateway.adapters_dir.clone(),
+        config.gateway.adapter_port_range,
+        &config.gateway.listen,
+    )?);
+    tracing::info!(
+        adapters_dir = %config.gateway.adapters_dir,
+        adapters_found = adapter_manager.adapters.len(),
+        "Adapter manager initialized"
+    );
+
+    let backend_manager = Arc::new(ExternalBackendManager::new(
+        config.gateway.backends_dir.clone(),
+        config.gateway.backend_port_range,
+        &config.gateway.listen,
+        config.auth.send_token.clone(),
+    ));
+
+    let manager = Arc::new(CredentialManager::new());
+
+    let manager_clone = manager.clone();
+    let adapter_manager_clone = adapter_manager.clone();
+    let backend_manager_clone = backend_manager.clone();
+    let (state, server_future) = server::create_server(
+        config.clone(),
+        manager_clone,
+        adapter_manager_clone,
+        backend_manager_clone,
+    )
+    .await?;
+
+    for (credential_id, cred_config) in &config.credentials {
+        if cred_config.active {
+            match adapter_manager
+                .spawn(
+                    credential_id,
+                    &cred_config.adapter,
+                    &cred_config.token,
+                    cred_config.config.as_ref(),
+                )
+                .await
+            {
+                Ok((instance_id, port)) => {
+                    tracing::info!(
+                        credential_id = %credential_id,
+                        adapter = %cred_config.adapter,
+                        instance_id = %instance_id,
+                        port = %port,
+                        "Adapter instance started"
+                    );
+
+                    if cred_config.adapter != "generic" && port > 0 {
+                        let ready = adapter::wait_for_adapter_ready(
+                            &adapter_manager,
+                            credential_id,
+                            Duration::from_secs(30),
+                            Duration::from_millis(500),
+                        )
+                        .await;
+
+                        if ready {
+                            tracing::info!(
+                                credential_id = %credential_id,
+                                adapter = %cred_config.adapter,
+                                "Adapter is ready"
+                            );
+                        } else {
+                            tracing::warn!(
+                                credential_id = %credential_id,
+                                adapter = %cred_config.adapter,
+                                "Adapter did not become ready within timeout"
+                            );
+                        }
+                    }
+
+                    manager
+                        .spawn_task(credential_id.clone(), cred_config.clone())
+                        .await;
+                }
+                Err(e) => {
+                    tracing::error!(
+                        credential_id = %credential_id,
+                        adapter = %cred_config.adapter,
+                        error = %e,
+                        "Failed to start adapter instance"
+                    );
+                }
+            }
+        }
+    }
+
+    for (name, backend_cfg) in &config.backends {
+        if backend_cfg.active && backend_cfg.protocol == BackendProtocol::External {
+            match backend_manager.spawn(name, backend_cfg).await {
+                Ok((port, token)) => {
+                    tracing::info!(
+                        backend = %name,
+                        port = %port,
+                        "External backend spawned"
+                    );
+
+                    let ready = backend::wait_for_backend_ready(
+                        port,
+                        Duration::from_secs(30),
+                        Duration::from_millis(500),
+                    )
+                    .await;
+
+                    if ready {
+                        tracing::info!(backend = %name, "Backend is ready");
+                    } else {
+                        tracing::warn!(backend = %name, "Backend did not become ready within timeout");
+                    }
+
+                    let mut cfg = state.config.write().await;
+                    if let Some(b) = cfg.backends.get_mut(name) {
+                        b.port = Some(port);
+                        b.token = token;
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        backend = %name,
+                        error = %e,
+                        "Failed to spawn external backend"
+                    );
+                }
+            }
+        }
+    }
+
+    {
+        let adapter_manager_for_health = adapter_manager.clone();
+        tokio::spawn(async move {
+            adapter::start_adapter_health_monitor(adapter_manager_for_health, 30, 3).await;
+        });
+    }
+
+    let watcher_state = state.clone();
+    let watcher_manager = manager.clone();
+    let watcher_adapter_manager = adapter_manager.clone();
+    let watcher_path = config_path_str.to_string();
+    let watcher_guardrails_dir = config.gateway.guardrails_dir.clone();
+    tokio::spawn(async move {
+        if let Err(e) = watcher::watch_config(
+            watcher_path,
+            watcher_state,
+            watcher_manager,
+            watcher_adapter_manager,
+            watcher_guardrails_dir,
+        )
+        .await
+        {
+            tracing::error!(error = %e, "Config watcher failed");
+        }
+    });
+
+    {
+        let config = state.config.read().await;
+        for (name, health_config) in &config.health_checks {
+            let state_clone = state.clone();
+            let name_clone = name.clone();
+            let config_clone = health_config.clone();
+            tokio::spawn(async move {
+                health::start_health_check(state_clone, name_clone, config_clone).await;
+            });
+        }
+    }
+
+    server_future.await?;
+
+    tracing::info!("Shutting down...");
+    backend_manager.stop_all().await;
+    adapter_manager.stop_all().await;
+    manager.shutdown().await;
+
+    Ok(())
+}
