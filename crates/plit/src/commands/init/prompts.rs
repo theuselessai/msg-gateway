@@ -246,7 +246,7 @@ async fn prompt_llm_config(theme: &ColorfulTheme) -> Result<(String, String, Str
                 .interact()?
         };
 
-        match fetch_models(adapter_kind, &api_key).await {
+        match fetch_models(adapter_kind, &api_key, &base_url).await {
             Ok(models) if models.is_empty() => {
                 let model: String = Input::with_theme(theme)
                     .with_prompt("Model name (no models found, enter manually)")
@@ -289,18 +289,30 @@ fn provider_to_adapter_kind(provider: &str) -> AdapterKind {
     }
 }
 
-async fn fetch_models(adapter_kind: AdapterKind, api_key: &str) -> Result<Vec<String>> {
-    let client = if api_key.is_empty() {
-        genai::Client::default()
-    } else {
+async fn fetch_models(
+    adapter_kind: AdapterKind,
+    api_key: &str,
+    base_url: &str,
+) -> Result<Vec<String>> {
+    let mut builder = genai::Client::builder();
+
+    if !api_key.is_empty() {
         let key = api_key.to_string();
-        genai::Client::builder()
-            .with_auth_resolver_fn(move |_| {
-                Ok(Some(genai::resolver::AuthData::from_single(key.clone())))
-            })
-            .build()
-    };
-    client
+        builder = builder.with_auth_resolver_fn(move |_| {
+            Ok(Some(genai::resolver::AuthData::from_single(key.clone())))
+        });
+    }
+
+    if !base_url.is_empty() {
+        let url = base_url.to_string();
+        builder = builder.with_service_target_resolver_fn(move |mut st| {
+            st.endpoint = genai::resolver::Endpoint::from_owned(url.clone());
+            Ok(st)
+        });
+    }
+
+    builder
+        .build()
         .all_model_names(adapter_kind)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))
