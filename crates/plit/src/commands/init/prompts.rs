@@ -116,12 +116,21 @@ fn prompt_redis_url(theme: &ColorfulTheme) -> Result<String> {
 }
 
 fn validate_redis(url: &str) -> Result<()> {
+    let is_tls = url.starts_with("rediss://");
     let stripped = url
         .strip_prefix("redis://")
         .or_else(|| url.strip_prefix("rediss://"))
         .unwrap_or(url);
 
-    let host_port = stripped.split('/').next().unwrap_or(stripped);
+    // Strip user:pass@ if present (redis://user:pass@host:port/db)
+    let after_auth = stripped.split('@').next_back().unwrap_or(stripped);
+
+    // Strip /db suffix
+    let host_port = after_auth.split('/').next().unwrap_or(after_auth);
+
+    // Strip ?query parameters
+    let host_port = host_port.split('?').next().unwrap_or(host_port);
+
     let (host, port) = if let Some((h, p)) = host_port.rsplit_once(':') {
         let port = p
             .parse::<u16>()
@@ -132,6 +141,13 @@ fn validate_redis(url: &str) -> Result<()> {
     };
 
     let host = if host.is_empty() { "localhost" } else { host };
+
+    if is_tls {
+        bail!(
+            "TLS Redis (rediss://) is not supported for validation — only checking reachability via plain TCP"
+        );
+    }
+
     let addr = format!("{}:{}", host, port);
 
     let socket_addr = addr
