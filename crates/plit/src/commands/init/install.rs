@@ -110,7 +110,8 @@ pub async fn run_migrations(env_path: &Path) -> Result<()> {
     let env_vars = parse_env_file(env_path)?;
 
     let mut cmd = Command::new(&alembic);
-    cmd.args(["upgrade", "head"]).current_dir(&pipelit_dir);
+    cmd.args(["upgrade", "head"])
+        .current_dir(pipelit_dir.join("platform"));
 
     for (key, value) in &env_vars {
         cmd.env(key, value);
