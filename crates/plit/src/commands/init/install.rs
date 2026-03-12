@@ -1,8 +1,3 @@
-//! Pipelit installation for `plit init`.
-//!
-//! Handles cloning the Pipelit repository, creating a Python virtualenv,
-//! installing dependencies, and running database migrations.
-
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
@@ -11,7 +6,6 @@ use tokio::process::Command;
 use super::config;
 use crate::output;
 
-/// Clone the Pipelit repository if it doesn't already exist.
 pub async fn clone_pipelit() -> Result<()> {
     let pipelit_dir = config::pipelit_dir()?;
 
@@ -46,7 +40,6 @@ pub async fn clone_pipelit() -> Result<()> {
     Ok(())
 }
 
-/// Create a Python virtualenv if it doesn't already exist.
 pub async fn create_venv() -> Result<()> {
     let venv_dir = config::venv_dir()?;
 
@@ -72,7 +65,6 @@ pub async fn create_venv() -> Result<()> {
     Ok(())
 }
 
-/// Install Python dependencies from Pipelit's requirements.txt.
 pub async fn install_deps() -> Result<()> {
     let venv_dir = config::venv_dir()?;
     let pipelit_dir = config::pipelit_dir()?;
@@ -103,8 +95,6 @@ pub async fn install_deps() -> Result<()> {
     Ok(())
 }
 
-/// Run Alembic database migrations.
-/// The .env file must already be written before calling this.
 pub async fn run_migrations(env_path: &Path) -> Result<()> {
     let venv_dir = config::venv_dir()?;
     let pipelit_dir = config::pipelit_dir()?;
@@ -117,7 +107,6 @@ pub async fn run_migrations(env_path: &Path) -> Result<()> {
 
     output::status("  • Running database migrations...");
 
-    // Read .env file to pass DATABASE_URL and other vars to alembic
     let env_vars = parse_env_file(env_path)?;
 
     let mut cmd = Command::new(&alembic);
@@ -137,105 +126,114 @@ pub async fn run_migrations(env_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Start Pipelit temporarily, create the admin user, then kill it.
-pub async fn create_admin_user(
-    pipelit_port: u16,
-    username: &str,
-    password: &str,
+pub async fn run_cli_setup(
+    inputs: &super::prompts::UserInputs,
+    env: &super::prereqs::Environment,
     env_path: &Path,
 ) -> Result<()> {
     let venv_dir = config::venv_dir()?;
     let pipelit_dir = config::pipelit_dir()?;
     let python = venv_dir.join("bin").join("python");
-
-    output::status("  • Starting Pipelit temporarily to create admin user...");
-
     let env_vars = parse_env_file(env_path)?;
 
-    let mut child = Command::new(&python)
-        .args([
-            "-m",
-            "uvicorn",
-            "platform.main:app",
-            "--port",
-            &pipelit_port.to_string(),
-            "--host",
-            "127.0.0.1",
-        ])
-        .current_dir(&pipelit_dir)
-        .envs(env_vars)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .context("Failed to start Pipelit")?;
+    output::status("  • Running Pipelit setup...");
 
-    // Wait for Pipelit to become healthy (up to 30s)
-    let base_url = format!("http://localhost:{}", pipelit_port);
-    let client = reqwest::Client::new();
-    let healthy = wait_for_healthy(&client, &base_url, 30).await;
+    let mut cmd = Command::new(&python);
+    cmd.args(["-m", "cli", "setup"])
+        .arg("--username")
+        .arg(&inputs.admin_username)
+        .arg("--password")
+        .arg(&inputs.admin_password)
+        .arg("--sandbox-mode")
+        .arg(&env.sandbox_mode)
+        .arg("--redis-url")
+        .arg(&inputs.redis_url)
+        .arg("--platform-base-url")
+        .arg(&inputs.platform_base_url)
+        .current_dir(pipelit_dir.join("platform"));
 
-    if !healthy {
-        child.kill().await.ok();
-        bail!("Pipelit did not become healthy within 30 seconds");
+    for (key, value) in &env_vars {
+        cmd.env(key, value);
     }
 
-    // Create admin user via setup endpoint
-    let setup_url = format!("{}/api/v1/auth/setup/", base_url);
-    let body = serde_json::json!({
-        "username": username,
-        "password": password,
-    });
+    let output_result = cmd.output().await.context("Failed to run Pipelit CLI setup")?;
 
-    let resp = client
-        .post(&setup_url)
-        .json(&body)
-        .send()
-        .await
-        .context("Failed to call Pipelit setup endpoint")?;
-
-    if resp.status().is_success() {
-        output::status(&format!("  ✓ Created admin user '{}'", username));
-    } else {
-        let status = resp.status();
-        let body_text = resp.text().await.unwrap_or_default();
-        if body_text.contains("already exists") || body_text.contains("already set up") {
-            output::status(&format!(
-                "  ⚠ Admin user may already exist ({}), continuing",
-                status
-            ));
-        } else {
-            child.kill().await.ok();
-            bail!("Failed to create admin user: {} — {}", status, body_text);
-        }
+    if !output_result.status.success() {
+        let stderr = String::from_utf8_lossy(&output_result.stderr);
+        bail!("Pipelit setup failed: {}", stderr);
     }
 
-    // Kill the temporary Pipelit process
-    child.kill().await.ok();
-    output::status("  ✓ Stopped temporary Pipelit instance");
+    let stdout = String::from_utf8_lossy(&output_result.stdout);
+    let result: serde_json::Value =
+        serde_json::from_str(&stdout).context("Failed to parse setup output")?;
+
+    let username = result["username"].as_str().unwrap_or("unknown");
+    output::status(&format!("  ✓ Created admin user '{}'", username));
 
     Ok(())
 }
 
-/// Poll the health endpoint until it returns 200 or timeout.
-async fn wait_for_healthy(client: &reqwest::Client, base_url: &str, timeout_secs: u64) -> bool {
-    let health_url = format!("{}/health", base_url);
-    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs);
+pub async fn run_apply_fixture(
+    inputs: &super::prompts::UserInputs,
+    env_path: &Path,
+) -> Result<super::config::FixtureOutput> {
+    let venv_dir = config::venv_dir()?;
+    let pipelit_dir = config::pipelit_dir()?;
+    let python = venv_dir.join("bin").join("python");
+    let env_vars = parse_env_file(env_path)?;
 
-    while tokio::time::Instant::now() < deadline {
-        if let Ok(resp) = client.get(&health_url).send().await
-            && resp.status().is_success()
-        {
-            return true;
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    output::status("  • Applying default agent fixture...");
+
+    let mut cmd = Command::new(&python);
+    cmd.args(["-m", "cli", "apply-fixture", "default-agent"])
+        .arg("--provider")
+        .arg(&inputs.llm_provider)
+        .arg("--model")
+        .arg(&inputs.llm_model)
+        .arg("--api-key")
+        .arg(&inputs.llm_api_key)
+        .arg("--base-url")
+        .arg(&inputs.llm_base_url)
+        .current_dir(pipelit_dir.join("platform"));
+
+    for (key, value) in &env_vars {
+        cmd.env(key, value);
     }
 
-    false
+    let output_result = cmd
+        .output()
+        .await
+        .context("Failed to run apply-fixture")?;
+
+    if !output_result.status.success() {
+        let stderr = String::from_utf8_lossy(&output_result.stderr);
+        bail!("apply-fixture failed: {}", stderr);
+    }
+
+    let stdout = String::from_utf8_lossy(&output_result.stdout);
+    let result: serde_json::Value =
+        serde_json::from_str(&stdout).context("Failed to parse fixture output")?;
+
+    let workflow_slug = result["workflow_slug"]
+        .as_str()
+        .context("Missing workflow_slug in fixture output")?
+        .to_string();
+    let trigger_node_id = result["trigger_node_id"]
+        .as_str()
+        .context("Missing trigger_node_id in fixture output")?
+        .to_string();
+
+    output::status(&format!(
+        "  ✓ Created workflow '{}' with trigger '{}'",
+        workflow_slug, trigger_node_id
+    ));
+
+    Ok(super::config::FixtureOutput {
+        workflow_slug,
+        trigger_node_id,
+    })
 }
 
-/// Parse a simple .env file into key-value pairs.
-/// Skips comments and empty lines.
 fn parse_env_file(path: &Path) -> Result<Vec<(String, String)>> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
