@@ -155,7 +155,12 @@ fn is_running(pid_path: &std::path::Path) -> bool {
 
     #[cfg(unix)]
     {
-        unsafe { libc::kill(pid as i32, 0) == 0 }
+        let ret = unsafe { libc::kill(pid as i32, 0) };
+        if ret == 0 {
+            return true;
+        }
+        let err = std::io::Error::last_os_error();
+        err.raw_os_error() == Some(libc::EPERM)
     }
     #[cfg(not(unix))]
     {

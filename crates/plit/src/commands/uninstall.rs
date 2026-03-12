@@ -15,7 +15,9 @@ pub fn run() -> Result<()> {
     let pid_path = data_dir.join("plit.pid");
     if pid_path.exists() {
         output::status("Stopping running plit stack first...");
-        let _ = super::stop::run();
+        if let Err(e) = super::stop::run() {
+            output::error(&format!("Failed to stop plit stack: {}", e));
+        }
     }
 
     let mut dirs_to_remove: Vec<(&str, std::path::PathBuf)> = Vec::new();

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 use super::init::config;
 use crate::output;
@@ -20,6 +20,11 @@ pub fn run() -> Result<()> {
         .parse()
         .with_context(|| format!("Invalid PID in {}", pid_path.display()))?;
 
+    if pid <= 0 {
+        let _ = std::fs::remove_file(&pid_path);
+        bail!("Invalid PID {} in {}", pid, pid_path.display());
+    }
+
     output::status(&format!("Stopping plit (PID {})...", pid));
 
     #[cfg(unix)]
@@ -28,11 +33,18 @@ pub fn run() -> Result<()> {
         if ret != 0 {
             let err = std::io::Error::last_os_error();
             let _ = std::fs::remove_file(&pid_path);
-            if err.kind() == std::io::ErrorKind::PermissionDenied {
-                bail!("Permission denied sending SIGTERM to process group {}", pid);
+            match err.raw_os_error() {
+                Some(libc::EPERM) => {
+                    bail!("Permission denied sending SIGTERM to process group {}", pid);
+                }
+                Some(libc::ESRCH) => {
+                    output::status("Process already exited.");
+                    return Ok(());
+                }
+                _ => {
+                    bail!("Failed to stop process group {}: {}", pid, err);
+                }
             }
-            output::status("Process already exited.");
-            return Ok(());
         }
     }
 
