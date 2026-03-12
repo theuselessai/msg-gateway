@@ -1519,7 +1519,7 @@ dependencies = [
 
 [[package]]
 name = "msg-gateway"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1727,7 +1727,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "plit"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1737,6 +1737,7 @@ dependencies = [
  "futures-util",
  "genai",
  "libc",
+ "msg-gateway",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
