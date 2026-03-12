@@ -227,9 +227,7 @@ fn load_config_defaults() -> (Option<String>, Option<String>, Option<String>) {
         .and_then(|c| c["token"].as_str())
         .map(String::from);
 
-    let admin_token = cfg["gateway"]["admin_token"]
-        .as_str()
-        .map(String::from);
+    let admin_token = cfg["gateway"]["admin_token"].as_str().map(String::from);
 
     let listen = cfg["gateway"]["listen"].as_str().unwrap_or("");
     let gateway_url = if !listen.is_empty() {
