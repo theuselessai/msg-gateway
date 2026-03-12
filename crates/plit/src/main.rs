@@ -159,10 +159,12 @@ async fn main() -> anyhow::Result<()> {
     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
     let json_output = cli.json || !is_tty;
 
+    let (cfg_token, cfg_admin_token, cfg_gateway_url) = load_config_defaults();
+
     let ctx = commands::Context {
-        gateway_url: cli.gateway_url,
-        token: cli.token,
-        admin_token: cli.admin_token,
+        gateway_url: cfg_gateway_url.unwrap_or(cli.gateway_url),
+        token: cli.token.or(cfg_token),
+        admin_token: cli.admin_token.or(cfg_admin_token),
         json_output,
     };
 
@@ -203,4 +205,38 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Uninstall => commands::uninstall::run(),
     }
+}
+
+fn load_config_defaults() -> (Option<String>, Option<String>, Option<String>) {
+    let path = match commands::init::config::config_json_path() {
+        Ok(p) if p.exists() => p,
+        _ => return (None, None, None),
+    };
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(r) => r,
+        _ => return (None, None, None),
+    };
+    let cfg: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(c) => c,
+        _ => return (None, None, None),
+    };
+
+    let token = cfg["credentials"]
+        .as_object()
+        .and_then(|creds| creds.values().next())
+        .and_then(|c| c["token"].as_str())
+        .map(String::from);
+
+    let admin_token = cfg["gateway"]["admin_token"]
+        .as_str()
+        .map(String::from);
+
+    let listen = cfg["gateway"]["listen"].as_str().unwrap_or("");
+    let gateway_url = if !listen.is_empty() {
+        Some(format!("http://{listen}"))
+    } else {
+        None
+    };
+
+    (token, admin_token, gateway_url)
 }
