@@ -6,7 +6,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use crate::output;
 
@@ -110,7 +110,7 @@ fn detect_sandbox_mode() -> Result<String> {
         }
         Ok(_) => {
             // Binary exists but can't create namespaces — already sandboxed
-            output::status("  ✓ already in a sandboxed environment (bwrap test run failed — lacking privileges)");
+            output::status("  ✓ already sandboxed (bwrap test failed — lacking privileges)");
             output::status("  → sandbox mode: container");
             Ok("container".to_string())
         }

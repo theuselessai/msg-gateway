@@ -29,10 +29,7 @@ pub async fn collect() -> Result<UserInputs> {
     let pipelit_port = loop {
         let port = prompt_port(&theme, "Pipelit port", 8000)?;
         if port == gateway_port {
-            output::error(&format!(
-                "Port {} is already used for the gateway",
-                port
-            ));
+            output::error(&format!("Port {} is already used for the gateway", port));
             continue;
         }
         break port;
@@ -63,8 +60,7 @@ pub async fn collect() -> Result<UserInputs> {
         .default(format!("http://localhost:{}", pipelit_port))
         .interact_text()?;
 
-    let (llm_provider, llm_api_key, llm_base_url, llm_model) =
-        prompt_llm_config(&theme).await?;
+    let (llm_provider, llm_api_key, llm_base_url, llm_model) = prompt_llm_config(&theme).await?;
 
     Ok(UserInputs {
         gateway_port,
@@ -127,7 +123,10 @@ fn validate_redis(url: &str) -> Result<()> {
 
     let host_port = stripped.split('/').next().unwrap_or(stripped);
     let (host, port) = if let Some((h, p)) = host_port.rsplit_once(':') {
-        (h, p.parse::<u16>().unwrap_or(6379))
+        let port = p
+            .parse::<u16>()
+            .with_context(|| format!("Invalid port number: {}", p))?;
+        (h, port)
     } else {
         (host_port, 6379)
     };

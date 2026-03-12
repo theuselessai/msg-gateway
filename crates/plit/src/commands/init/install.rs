@@ -156,7 +156,10 @@ pub async fn run_cli_setup(
         cmd.env(key, value);
     }
 
-    let output_result = cmd.output().await.context("Failed to run Pipelit CLI setup")?;
+    let output_result = cmd
+        .output()
+        .await
+        .context("Failed to run Pipelit CLI setup")?;
 
     if !output_result.status.success() {
         let stderr = String::from_utf8_lossy(&output_result.stderr);
@@ -200,10 +203,7 @@ pub async fn run_apply_fixture(
         cmd.env(key, value);
     }
 
-    let output_result = cmd
-        .output()
-        .await
-        .context("Failed to run apply-fixture")?;
+    let output_result = cmd.output().await.context("Failed to run apply-fixture")?;
 
     if !output_result.status.success() {
         let stderr = String::from_utf8_lossy(&output_result.stderr);

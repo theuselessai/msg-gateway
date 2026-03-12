@@ -186,7 +186,6 @@ pub fn write_gateway_config(
     restrict_permissions(&path)?;
 
     output::status(&format!("  ✓ Wrote {}", path.display()));
-    output::status(&format!("  ✓ Credential token: {}", credential_token));
     Ok(())
 }
 

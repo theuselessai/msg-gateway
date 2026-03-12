@@ -95,14 +95,15 @@ pub async fn run() -> Result<()> {
     output::status("");
 
     // 20. Done
+    let config_path = config::config_json_path()?;
+    let env_display = config::dot_env_path()?;
+    let pipelit_display = config::pipelit_dir()?;
+
     output::status("Setup complete!");
     output::status("");
-    output::status(&format!(
-        "  Config:  {}",
-        config::config_json_path()?.display()
-    ));
-    output::status(&format!("  Env:     {}", config::dot_env_path()?.display()));
-    output::status(&format!("  Pipelit: {}", config::pipelit_dir()?.display()));
+    output::status(&format!("  Config:  {}", config_path.display()));
+    output::status(&format!("  Env:     {}", env_display.display()));
+    output::status(&format!("  Pipelit: {}", pipelit_display.display()));
     output::status("");
     output::status("Run `plit start` to launch.");
 
