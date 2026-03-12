@@ -305,7 +305,7 @@ async fn fetch_models(
 
     if !base_url.is_empty() {
         let url = base_url.to_string();
-        builder = builder.with_service_target_resolver_fn(move |mut st| {
+        builder = builder.with_service_target_resolver_fn(move |mut st: genai::ServiceTarget| {
             st.endpoint = genai::resolver::Endpoint::from_owned(url.clone());
             Ok(st)
         });
