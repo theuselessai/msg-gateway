@@ -29,7 +29,7 @@ pub fn check_all() -> Result<Environment> {
         output::status(&format!("  ✓ container detected ({})", ctype));
     }
 
-    let mut checks = vec![
+    let checks = vec![
         check_binary(
             "python3",
             &["--version"],
@@ -52,14 +52,6 @@ pub fn check_all() -> Result<Environment> {
             "Install git: https://git-scm.com/downloads or `sudo apt install git`",
         ),
     ];
-
-    if !in_container {
-        checks.push(check_binary(
-            "bwrap",
-            &["--version"],
-            "Install bubblewrap: `sudo apt install bubblewrap` or build from source",
-        ));
-    }
 
     let mut any_missing = false;
 
@@ -84,12 +76,59 @@ pub fn check_all() -> Result<Environment> {
     }
 
     let sandbox_mode = if in_container {
+        output::status("  → sandbox mode: container");
+        "container".to_string()
+    } else if cfg!(target_os = "macos") {
+        output::status("  ⚠ macOS detected — bubblewrap is not available on macOS");
+        output::status("  → sandbox mode: container (code execution is not sandboxed)");
         "container".to_string()
     } else {
-        "bwrap".to_string()
+        detect_sandbox_mode()?
     };
 
     Ok(Environment { sandbox_mode })
+}
+
+/// Determine sandbox mode when not in a known container.
+///
+/// Attempts a bwrap test run (`bwrap --ro-bind / / true`) to check if
+/// bubblewrap actually works — not just whether the binary exists.
+///
+/// - Test succeeds → `"bwrap"`
+/// - Binary exists but test fails → already inside a sandboxed env
+///   (e.g. bwrap with Alpine rootfs, no CAP_SYS_ADMIN) → `"container"`
+/// - Binary not found → show install instructions and bail
+fn detect_sandbox_mode() -> Result<String> {
+    match Command::new("bwrap")
+        .args(["--ro-bind", "/", "/", "/bin/true"])
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            output::status("  ✓ bwrap (test run passed)");
+            output::status("  → sandbox mode: bwrap");
+            Ok("bwrap".to_string())
+        }
+        Ok(_) => {
+            // Binary exists but can't create namespaces — already sandboxed
+            output::status("  ✓ already sandboxed (bwrap test failed — lacking privileges)");
+            output::status("  → sandbox mode: container");
+            Ok("container".to_string())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            output::status("  ✗ bwrap — not found");
+            output::status("");
+            output::status("Bubblewrap (bwrap) is required for code sandboxing.");
+            output::status("Install it and re-run `plit init`:");
+            output::status("  • Ubuntu/Debian: sudo apt install bubblewrap");
+            output::status("  • Fedora: sudo dnf install bubblewrap");
+            output::status("  • Arch: sudo pacman -S bubblewrap");
+            output::status("  • From source: https://github.com/containers/bubblewrap");
+            bail!("bubblewrap (bwrap) is not installed.");
+        }
+        Err(e) => {
+            bail!("Failed to check bwrap: {e}");
+        }
+    }
 }
 
 fn detect_container() -> Option<String> {

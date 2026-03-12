@@ -1,14 +1,3 @@
-//! `plit init` — interactive setup wizard for the Pipelit + Gateway stack.
-//!
-//! Bootstraps a complete installation from scratch:
-//! 1. Check prerequisites (python3, pip3, redis-server, git)
-//! 2. Clone Pipelit, create venv, install deps
-//! 3. Prompt for ports and admin credentials
-//! 4. Generate shared tokens
-//! 5. Write config files
-//! 6. Run database migrations
-//! 7. Create admin user
-
 mod config;
 mod install;
 mod prereqs;
@@ -20,13 +9,10 @@ use dialoguer::Confirm;
 
 use crate::output;
 
-/// Run the `plit init` wizard.
 pub async fn run() -> Result<()> {
     output::status("plit init — setting up Pipelit + Gateway\n");
 
-    // -----------------------------------------------------------------------
     // 1. Re-run detection
-    // -----------------------------------------------------------------------
     let config_exists = config::config_json_path()?.exists();
     let pipelit_exists = config::pipelit_dir()?.exists();
 
@@ -44,21 +30,15 @@ pub async fn run() -> Result<()> {
         output::status("");
     }
 
-    // -----------------------------------------------------------------------
-    // 2. Check prerequisites
-    // -----------------------------------------------------------------------
+    // 2. Prereqs
     output::status("Checking prerequisites...");
     let env = prereqs::check_all()?;
     output::status("");
 
-    // -----------------------------------------------------------------------
-    // 3. Clone + install Pipelit
-    // -----------------------------------------------------------------------
+    // 3. Clone + venv + deps
     output::status("Setting up Pipelit...");
 
     if pipelit_exists && !config_exists {
-        // Pipelit dir exists but no config — possibly a partial install.
-        // Offer to re-clone.
         let reclone = Confirm::new()
             .with_prompt("Pipelit directory already exists. Re-clone from scratch?")
             .default(false)
@@ -77,60 +57,53 @@ pub async fn run() -> Result<()> {
     install::install_deps().await?;
     output::status("");
 
-    // -----------------------------------------------------------------------
-    // 4. Prompt for ports + admin credentials
-    // -----------------------------------------------------------------------
+    // 4-13. Prompts (ports, admin, redis, base url, LLM)
     output::status("Configuration:");
-    let inputs = prompts::collect()?;
+    let inputs = prompts::collect().await?;
     output::status("");
 
-    // -----------------------------------------------------------------------
-    // 5. Generate tokens
-    // -----------------------------------------------------------------------
+    // 14. Generate tokens
     output::status("Generating shared tokens...");
     let shared_tokens = tokens::generate();
     output::status("  ✓ Generated 3 shared tokens");
     output::status("");
 
-    // -----------------------------------------------------------------------
-    // 6. Write config files (.env first — needed for migrations)
-    // -----------------------------------------------------------------------
-    output::status("Writing configuration files...");
-    config::write_configs(&inputs, &shared_tokens, &env)?;
+    // 15. Write .env (needed for migrations)
+    output::status("Writing environment file...");
+    config::write_dot_env(&inputs, &shared_tokens)?;
     output::status("");
 
-    // -----------------------------------------------------------------------
-    // 7. Run migrations
-    // -----------------------------------------------------------------------
+    // 16. Run migrations
     output::status("Database setup...");
     let env_path = config::dot_env_path()?;
     install::run_migrations(&env_path).await?;
     output::status("");
 
-    // -----------------------------------------------------------------------
-    // 8. Create admin user
-    // -----------------------------------------------------------------------
-    output::status("Admin user setup...");
-    install::create_admin_user(
-        inputs.pipelit_port,
-        &inputs.admin_username,
-        &inputs.admin_password,
-        &env_path,
-    )
-    .await?;
+    // 17. CLI setup (admin user + conf.json + workspace + rootfs)
+    output::status("Platform setup...");
+    install::run_cli_setup(&inputs, &env, &env_path).await?;
     output::status("");
 
-    // -----------------------------------------------------------------------
-    // 9. Success
-    // -----------------------------------------------------------------------
-    output::status("Setup complete! 🎉");
+    // 18. Apply fixture
+    output::status("Creating default workflow...");
+    let fixture = install::run_apply_fixture(&inputs, &env_path).await?;
     output::status("");
-    output::status(&format!(
-        "  Config:  {}",
-        config::config_json_path()?.display()
-    ));
-    output::status(&format!("  Env:     {}", config::dot_env_path()?.display()));
-    output::status(&format!("  Pipelit: {}", config::pipelit_dir()?.display()));
+
+    // 19. Write config.json (with credential route from fixture)
+    output::status("Writing gateway configuration...");
+    config::write_gateway_config(&inputs, &shared_tokens, &fixture)?;
+    output::status("");
+
+    // 20. Done
+    let config_path = config::config_json_path()?;
+    let env_display = config::dot_env_path()?;
+    let pipelit_display = config::pipelit_dir()?;
+
+    output::status("Setup complete!");
+    output::status("");
+    output::status(&format!("  Config:  {}", config_path.display()));
+    output::status(&format!("  Env:     {}", env_display.display()));
+    output::status(&format!("  Pipelit: {}", pipelit_display.display()));
     output::status("");
     output::status("Run `plit start` to launch.");
 
