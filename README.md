@@ -1,11 +1,11 @@
 # plit-gw
 
 <p align="center">
-  <strong>Multi-protocol message gateway for LLM agents</strong>
+  <strong>Multi-protocol message gateway for AI agents</strong>
 </p>
 
 <p align="center">
-  <a href="https://crates.io/crates/plit"><img src="https://img.shields.io/crates/v/plit.svg?style=flat-square" alt="crates.io" /></a>
+  <a href="https://crates.io/crates/plit-gw"><img src="https://img.shields.io/crates/v/plit-gw.svg?style=flat-square" alt="crates.io" /></a>
   <a href="https://github.com/theuselessai/plit-gw/actions/workflows/ci.yml"><img src="https://github.com/theuselessai/plit-gw/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://app.codecov.io/gh/theuselessai/plit-gw"><img alt="Codecov" src="https://img.shields.io/codecov/c/github/theuselessai/plit-gw?style=flat-square"></a>
   <a href="https://github.com/theuselessai/plit-gw/releases"><img src="https://img.shields.io/github/v/tag/theuselessai/plit-gw?label=version&style=flat-square" alt="Version" /></a>
@@ -27,37 +27,57 @@ A standalone Rust message gateway that bridges user-facing communication protoco
 - **Health monitoring** — Emergency alerts when backend is unreachable
 - **Hot reload** — Config and guardrail changes apply without restart
 - **Admin API** — CRUD operations for credentials
-- **`plit` CLI tool** — Pipelit ecosystem CLI for chat, admin, and agent integration
 
 ## Quick Start
 
+The easiest way to get going is through the `plit` CLI, which bundles the gateway with an interactive setup wizard:
+
 ```bash
-# Install
+# Install plit (includes the gateway)
 cargo install plit
 
-# Bootstrap (interactive — sets up Pipelit, LLM provider, credentials)
+# Bootstrap interactively (sets up Pipelit, LLM provider, credentials)
 plit init
 
 # Launch the full stack
 plit start
-
-# Chat with your AI agent
-plit chat default_agent --chat-id my-session
 ```
 
-### Manual Setup (advanced)
+If you only need the gateway binary or want to embed it as a library:
 
 ```bash
-# Build from source
+# Install the gateway binary on its own
+cargo install plit-gw
+
+# Or build from source
+git clone https://github.com/theuselessai/plit-gw
+cd plit-gw
 cargo build --release
 
-# Configure
+# Configure and run
 cp config.example.json config.json
 # Edit config.json with your credentials
-
-# Run gateway only
 GATEWAY_CONFIG=config.json ./target/release/plit-gw
 ```
+
+## Library Usage
+
+`plit-gw` is both a binary and a library crate. You can embed the gateway directly in a Rust application:
+
+```toml
+# Cargo.toml
+[dependencies]
+plit-gw = "0.3.1"
+```
+
+```rust
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    plit_gw::run().await
+}
+```
+
+The `run()` function reads `GATEWAY_CONFIG` from the environment (defaulting to `config.json`) and blocks until the process receives a shutdown signal.
 
 ## Configuration
 
@@ -167,7 +187,7 @@ Adapters receive environment variables:
 
 ### Built-in Generic Adapter
 
-The `generic` adapter is built-in and provides REST + WebSocket interface:
+The `generic` adapter is built-in and provides a REST + WebSocket interface without any external process:
 
 ```bash
 # Send message via REST
@@ -244,9 +264,7 @@ message.source.protocol == "telegram"
 
 ### Hot reload
 
-Guardrail rules reload automatically when rule files in `guardrails_dir` change. No restart needed.
-
-### Configuration
+Guardrail rules reload automatically when rule files in `guardrails_dir` change. No restart needed. The same applies to the main `config.json` — the gateway watches for changes and applies them without dropping connections.
 
 Point `guardrails_dir` at a directory of rule files:
 
@@ -260,70 +278,22 @@ Point `guardrails_dir` at a directory of rule files:
 
 If `guardrails_dir` is omitted and a `guardrails/` directory exists next to `config.json`, it's picked up automatically.
 
-## CLI Tool (`plit`)
-
-A standalone command-line client for interacting with the gateway. Supports interactive chat, one-shot messaging, WebSocket streaming, credential management, and health checks. Backend-agnostic — works with Pipelit, OpenCode, or any external backend.
-
-### Install
-
-```bash
-cargo build --release -p plit
-# Binary at target/release/plit
-```
-
-### Usage
-
-```bash
-# Set connection defaults
-export GATEWAY_URL=http://localhost:8080
-export GATEWAY_TOKEN=my-credential-token
-
-# Interactive chat REPL
-plit chat my_credential --chat-id session-1
-
-# One-shot send (pipe-friendly)
-plit send my_credential --chat-id session-1 --text "Hello"
-echo "Hello" | plit send my_credential --chat-id session-1
-
-# Stream responses as JSONL (for agents, scripts, jq)
-plit listen my_credential --chat-id session-1
-
-# Health check
-plit health
-
-# Credential management (requires GATEWAY_ADMIN_TOKEN)
-plit credentials list --admin-token my-admin-token
-plit credentials create my_cred --adapter generic --token secret \
-  --backend pipelit --route '{"workflow_slug":"my-wf","trigger_node_id":"node_1"}'
-plit credentials activate my_cred
-plit credentials deactivate my_cred
-```
-
-### Output Modes
-
-- **TTY** (interactive terminal) — human-readable formatted output
-- **Piped** (stdout redirected) — auto-switches to JSON/JSONL
-- **`--json`** flag — force JSON output in any context
-
-### Environment Variables
-
-| Variable | Used by | Description |
-|----------|---------|-------------|
-| `GATEWAY_URL` | all commands | Gateway URL (default: `http://localhost:8080`) |
-| `GATEWAY_TOKEN` | chat, send, listen | Credential token for authentication |
-| `GATEWAY_ADMIN_TOKEN` | credentials, health | Admin token for management commands |
-
 ## API Endpoints
 
 | Endpoint | Description |
 |----------|-------------|
 | `GET /health` | Health check |
-| `POST /api/v1/send` | Send message to user (backend → gateway → adapter) |
+| `POST /api/v1/send` | Send message to user (backend to gateway to adapter) |
 | `POST /api/v1/adapter/inbound` | Receive message from adapter |
 | `GET /files/{id}` | Download cached file |
 | `GET /admin/credentials` | List credentials |
 | `POST /admin/credentials` | Create credential |
 | `PATCH /admin/credentials/{id}/activate` | Activate credential |
+
+## Ecosystem
+
+- **[plit](https://github.com/theuselessai/plit)** — CLI tool for chat, admin, and agent integration. The easiest way to run and interact with the gateway.
+- **[Pipelit](https://github.com/theuselessai/Pipelit)** — The workflow backend that `plit-gw` was originally built to front.
 
 ## Development
 
@@ -352,10 +322,10 @@ cat > .git/hooks/pre-push << 'EOF'
 #!/bin/bash
 set -e
 echo "Running pre-push checks..."
-cargo fmt --all -- --check || { echo "❌ Run: cargo fmt --all"; exit 1; }
-cargo clippy --all-targets --all-features -- -D warnings || { echo "❌ Fix clippy warnings"; exit 1; }
-cargo test --all-features || { echo "❌ Tests failed"; exit 1; }
-echo "✅ All checks passed"
+cargo fmt --all -- --check || { echo "Run: cargo fmt --all"; exit 1; }
+cargo clippy --all-targets --all-features -- -D warnings || { echo "Fix clippy warnings"; exit 1; }
+cargo test --all-features || { echo "Tests failed"; exit 1; }
+echo "All checks passed"
 EOF
 chmod +x .git/hooks/pre-push
 ```

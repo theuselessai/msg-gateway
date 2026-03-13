@@ -1,10 +1,11 @@
 [package]
 name = "plit-gw"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 description = "Multi-protocol message gateway for AI agents — bridges Telegram, Discord, Slack, Email to Pipelit and other backends"
 license = "Apache-2.0"
 repository = "https://github.com/theuselessai/plit-gw"
+readme = "README.md"
 keywords = ["gateway", "messaging", "ai", "agent", "pipelit"]
 categories = ["network-programming", "web-programming"]
 
