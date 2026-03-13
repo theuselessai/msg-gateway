@@ -1,6 +1,3 @@
-[workspace]
-members = ["crates/plit"]
-
 [package]
 name = "plit-gw"
 version = "0.3.1"
