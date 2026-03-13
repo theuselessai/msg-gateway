@@ -1,14 +1,14 @@
-//! Integration tests for msg-gateway
+//! Integration tests for plit-gw
 //!
 //! These tests spawn a real gateway server and mock backend to test the full flow.
 
-use msg_gateway::adapter::AdapterInstanceManager;
-use msg_gateway::backend::ExternalBackendManager;
-use msg_gateway::config::{
+use plit_gw::adapter::AdapterInstanceManager;
+use plit_gw::backend::ExternalBackendManager;
+use plit_gw::config::{
     AuthConfig, BackendConfig, BackendProtocol, Config, CredentialConfig, FileCacheConfig,
     GatewayConfig,
 };
-use msg_gateway::manager::CredentialManager;
+use plit_gw::manager::CredentialManager;
 use serial_test::serial;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -95,7 +95,7 @@ async fn find_available_port() -> u16 {
 struct TestServer {
     handle: tokio::task::JoinHandle<()>,
     #[allow(dead_code)]
-    state: Arc<msg_gateway::server::AppState>,
+    state: Arc<plit_gw::server::AppState>,
     port: u16,
     admin_token: String,
     send_token: String,
@@ -132,7 +132,7 @@ impl TestServer {
         ));
 
         let (state, server_future) =
-            msg_gateway::server::create_server(config, manager, adapter_manager, backend_manager)
+            plit_gw::server::create_server(config, manager, adapter_manager, backend_manager)
                 .await
                 .unwrap();
 
