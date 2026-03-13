@@ -1,4 +1,4 @@
-# msg-gateway
+# plit-gw
 
 <p align="center">
   <strong>Multi-protocol message gateway for LLM agents</strong>
@@ -6,9 +6,9 @@
 
 <p align="center">
   <a href="https://crates.io/crates/plit"><img src="https://img.shields.io/crates/v/plit.svg?style=flat-square" alt="crates.io" /></a>
-  <a href="https://github.com/theuselessai/msg-gateway/actions/workflows/ci.yml"><img src="https://github.com/theuselessai/msg-gateway/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://app.codecov.io/gh/theuselessai/msg-gateway"><img alt="Codecov" src="https://img.shields.io/codecov/c/github/theuselessai/msg-gateway?style=flat-square"></a>
-  <a href="https://github.com/theuselessai/msg-gateway/releases"><img src="https://img.shields.io/github/v/tag/theuselessai/msg-gateway?label=version&style=flat-square" alt="Version" /></a>
+  <a href="https://github.com/theuselessai/plit-gw/actions/workflows/ci.yml"><img src="https://github.com/theuselessai/plit-gw/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://app.codecov.io/gh/theuselessai/plit-gw"><img alt="Codecov" src="https://img.shields.io/codecov/c/github/theuselessai/plit-gw?style=flat-square"></a>
+  <a href="https://github.com/theuselessai/plit-gw/releases"><img src="https://img.shields.io/github/v/tag/theuselessai/plit-gw?label=version&style=flat-square" alt="Version" /></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square" alt="License: Apache 2.0" /></a>
 </p>
 
