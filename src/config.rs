@@ -280,15 +280,15 @@ fn resolve_guardrails_dir(gateway: &mut GatewayConfig, config_dir: &Path) {
 ///
 /// Resolution order:
 /// 1. `GATEWAY_CONFIG` env var — returned as-is (backward compat, no existence check)
-/// 2. `$XDG_CONFIG_HOME/msg-gateway/config.json` — if file exists
-/// 3. `$HOME/.config/msg-gateway/config.json` — if file exists
+/// 2. `$XDG_CONFIG_HOME/plit-gw/config.json` — if file exists
+/// 3. `$HOME/.config/plit-gw/config.json` — if file exists
 /// 4. `./config.json` — CWD fallback
 pub fn resolve_config_path() -> PathBuf {
     if let Ok(path) = std::env::var("GATEWAY_CONFIG") {
         return PathBuf::from(path);
     }
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        let p = PathBuf::from(xdg).join("msg-gateway").join("config.json");
+        let p = PathBuf::from(xdg).join("plit-gw").join("config.json");
         if p.exists() {
             return p;
         }
@@ -296,7 +296,7 @@ pub fn resolve_config_path() -> PathBuf {
     if let Ok(home) = std::env::var("HOME") {
         let p = PathBuf::from(home)
             .join(".config")
-            .join("msg-gateway")
+            .join("plit-gw")
             .join("config.json");
         if p.exists() {
             return p;
@@ -980,7 +980,7 @@ mod tests {
     #[serial]
     fn test_resolve_config_path_xdg_config_home() {
         let temp_dir = TempDir::new().unwrap();
-        let xdg_config = temp_dir.path().join("msg-gateway");
+        let xdg_config = temp_dir.path().join("plit-gw");
         std::fs::create_dir_all(&xdg_config).unwrap();
         let config_file = xdg_config.join("config.json");
         std::fs::write(&config_file, "{}").unwrap();
@@ -1001,7 +1001,7 @@ mod tests {
     #[serial]
     fn test_resolve_config_path_home_config() {
         let temp_dir = TempDir::new().unwrap();
-        let home_config = temp_dir.path().join(".config").join("msg-gateway");
+        let home_config = temp_dir.path().join(".config").join("plit-gw");
         std::fs::create_dir_all(&home_config).unwrap();
         let config_file = home_config.join("config.json");
         std::fs::write(&config_file, "{}").unwrap();
@@ -1035,16 +1035,12 @@ mod tests {
     fn test_resolve_config_path_xdg_takes_precedence_over_home() {
         let temp_dir = TempDir::new().unwrap();
 
-        let xdg_config = temp_dir.path().join("xdg").join("msg-gateway");
+        let xdg_config = temp_dir.path().join("xdg").join("plit-gw");
         std::fs::create_dir_all(&xdg_config).unwrap();
         let xdg_file = xdg_config.join("config.json");
         std::fs::write(&xdg_file, "{}").unwrap();
 
-        let home_config = temp_dir
-            .path()
-            .join("home")
-            .join(".config")
-            .join("msg-gateway");
+        let home_config = temp_dir.path().join("home").join(".config").join("plit-gw");
         std::fs::create_dir_all(&home_config).unwrap();
         let home_file = home_config.join("config.json");
         std::fs::write(&home_file, "{}").unwrap();

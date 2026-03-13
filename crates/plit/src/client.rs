@@ -1,4 +1,4 @@
-//! HTTP + WebSocket client for the msg-gateway API.
+//! HTTP + WebSocket client for the plit-gw API.
 
 use anyhow::{Context, Result, bail};
 use futures_util::StreamExt;

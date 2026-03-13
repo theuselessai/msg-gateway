@@ -1,7 +1,7 @@
-//! msg-gateway library
+//! plit-gw — multi-protocol message gateway
 //!
-//! Multi-protocol message gateway bridging user protocols (Telegram, Discord,
-//! Slack, Email, Generic HTTP/WS) to backend agent protocols (Pipelit, OpenCode).
+//! Bridges user protocols (Telegram, Discord, Slack, Email, Generic HTTP/WS)
+//! to backend agent protocols (Pipelit, OpenCode).
 
 pub mod adapter;
 pub mod admin;
@@ -30,12 +30,12 @@ pub async fn run() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "msg_gateway=debug,tower_http=debug".into()),
+                .unwrap_or_else(|_| "plit_gw=debug,tower_http=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    tracing::info!("Starting msg-gateway");
+    tracing::info!("Starting plit-gw");
 
     let config_path = config::resolve_config_path();
 

@@ -1518,33 +1518,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "msg-gateway"
-version = "0.3.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "cel-interpreter",
- "chrono",
- "futures-util",
- "http",
- "notify",
- "regex",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "serial_test",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite 0.26.2",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "multer"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1727,7 +1700,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "plit"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1737,7 +1710,7 @@ dependencies = [
  "futures-util",
  "genai",
  "libc",
- "msg-gateway",
+ "plit-gw",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -1745,6 +1718,33 @@ dependencies = [
  "tokio-tungstenite 0.26.2",
  "tokio-util",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "plit-gw"
+version = "0.3.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "cel-interpreter",
+ "chrono",
+ "futures-util",
+ "http",
+ "notify",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

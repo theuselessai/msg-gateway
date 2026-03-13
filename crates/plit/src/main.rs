@@ -4,7 +4,7 @@ mod client;
 mod commands;
 mod output;
 
-/// plit — Pipelit ecosystem CLI for msg-gateway
+/// plit — Pipelit ecosystem CLI
 ///
 /// Send and receive messages, manage credentials, and check health.
 /// Talks to the gateway's generic adapter interface — works with any backend.
